@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  48dp 通用版本（通知小图标、关于页等需要"一个图标"的地方）。
+
+  与 ic_bridge_foreground / ic_bridge_monochrome **严格同源**：
+  都是首页背景 Wallpaper 里那道曲线，只是把 108 视口等比缩到 48。
+  比例 48/108 = 4/9，所以坐标与线宽全部 ×(4/9)：
+    M33.14,62.68 C51.58,47.08 49.49,74.85 60.47,74.86 C76.73,74.87 67.24,42.39 74.86,33.14
+    → M14.73,27.86 C22.92,20.92 22.00,33.27 26.88,33.27 C34.10,33.28 29.88,18.84 33.27,14.73
+  线宽 7 → 3.11。
+
+  注意这个 48dp 版本是**方形铺满**的：它不经过 launcher 的圆形遮罩，
+  而是直接作为一张图用，所以曲线按 108 的同比例摆放（不额外内收），
+  保证与自适应图标在视觉上大小一致。
+
+  配色与自适应版统一（亮色风格）：底 #FAF9FD，弧 #563496。
+  这里用单色弧而非渐变：48dp 上渐变跨度太小看不出效果，
+  单色反而更干净，也与 monochrome 层的做法一致。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <path
+        android:fillColor="#FAF9FD"
+        android:pathData="M0,0h48v48h-48z" />
+
+    <path
+        android:pathData="M14.73,27.86 C22.92,20.92 22.00,33.27 26.88,33.27 C34.10,33.28 29.88,18.84 33.27,14.73"
+        android:strokeWidth="3.11"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#563496"
+        android:fillColor="@android:color/transparent" />
+</vector>

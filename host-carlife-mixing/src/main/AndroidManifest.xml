@@ -1,0 +1,19 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"
+        tools:ignore="ForegroundServicesPolicy" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <queries>
+        <package android:name="com.miui.carlink" />
+        <package android:name="com.oplus.ocar" />
+        <package android:name="com.vivo.car.networking" />
+        <package android:name="com.samsung.android.carlink" />
+        <package android:name="com.hihonor.auto" />
+    </queries>
+    <application>
+        <service
+            android:name="com.baidu.carlife.service.CarlifeConnectService"
+            android:exported="true"
+            android:foregroundServiceType="connectedDevice" />
+    </application>
+</manifest>

@@ -1,0 +1,355 @@
+package io.github.iamr0s.carvex.session
+import io.github.iamr0s.carvex.sessioncore.*
+
+import android.media.*
+import android.os.Bundle
+import android.view.Surface
+import io.github.iamr0s.carvex.carplay.core.*
+import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
+import java.io.OutputStream
+import java.nio.ByteBuffer
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.*
+
+class VideoEncoder(val width:Int,val height:Int,fps:Int,bitrate:Int,hostFormat:Bundle?,
+    private val resources:Resources,private val send:(ByteArray,Boolean,Long?)->Unit,private val metric:(Int)->Unit,
+    private val failure:(Throwable)->Unit,private val diagnostic:(String,Long)->Unit={_,_->},
+    private val stopSend:()->Unit={},
+    /** Builds the GPU front surface. It is the only way a still picture gets back into the encoder
+     *  when the source is not ours to repaint, but it costs a full-screen blit per frame and adds
+     *  three to four frames of latency, so it is opt-in and off by default. */
+    private val frontSurface:Boolean):AutoCloseable {
+    companion object {
+        /** Cadence of the still-picture media heartbeat. A picture can stay still for a long time,
+         *  and the silence that follows is what a receiver reports as a lost video, so one repeat a
+         *  second keeps packets flowing at the cost of a single tiny P frame. */
+        const val IDLE_REPEAT_INTERVAL_MS=1_000L
+        private data class Candidate(val info:MediaCodecInfo,val caps:MediaCodecInfo.CodecCapabilities)
+        private fun candidates(hostFormat:Bundle?):List<Candidate> {
+            return MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos
+                .filter{it.isEncoder&&it.supportedTypes.any{type->type.equals(MediaFormat.MIMETYPE_VIDEO_AVC,true)}}
+                .mapNotNull{info->runCatching{
+                    val caps=info.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+                    if(MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface !in caps.colorFormats)return@runCatching null
+                    val profile=hostFormat?.takeIf{it.containsKey("profile")}?.getInt("profile")
+                    val level=hostFormat?.takeIf{it.containsKey("level")}?.getInt("level")
+                    if(profile!=null&&!caps.profileLevels.any{it.profile==profile&&(level==null||it.level>=level)})return@runCatching null
+                    if(profile==null&&level!=null&&!caps.profileLevels.any{it.level>=level})return@runCatching null
+                    val mode=hostFormat?.takeIf{it.containsKey("bitrate-mode")}?.getInt("bitrate-mode")
+                    if(mode!=null&&caps.encoderCapabilities?.isBitrateModeSupported(mode)!=true)return@runCatching null
+                    Candidate(info,caps)
+                }.getOrNull()}
+                .sortedByDescending{it.info.isHardwareAccelerated}
+        }
+        /** Probe all AVC Surface encoders, bounded by actual size/rate and host configuration. */
+        fun supportedFps(hostFormat:Bundle?=null):(Int,Int,Int)->Int? {
+            val available=candidates(hostFormat)
+            return {width,height,limit->
+                available.mapNotNull{candidate->runCatching{
+                    val video=candidate.caps.videoCapabilities?:return@runCatching null
+                    if(!video.isSizeSupported(width,height))return@runCatching null
+                    val range=video.getSupportedFrameRatesFor(width,height)
+                    val upper=minOf(limit,kotlin.math.floor(range.upper).toInt())
+                    val lower=maxOf(1,kotlin.math.ceil(range.lower).toInt())
+                    if(upper<lower)null else (upper downTo lower).firstOrNull{video.areSizeAndRateSupported(width,height,it.toDouble())}
+                }.getOrNull()}.maxOrNull()
+            }
+        }
+        /** Widest bitrate range the AVC Surface encoders here offer. The settings screen sizes its
+         *  slider from this instead of an invented ceiling, so a device that can do more is not held
+         *  back and one that can do less is visible before a session starts. Null when none is
+         *  usable, which leaves the caller its own fallback. */
+        fun supportedBitrate(hostFormat:Bundle?=null):IntRange? {
+            val ranges=candidates(hostFormat).mapNotNull{it.caps.videoCapabilities?.bitrateRange}
+            if(ranges.isEmpty())return null
+            return maxOf(1,ranges.minOf{it.lower})..ranges.maxOf{it.upper}
+        }
+        private fun createCompatibleCodec(width:Int,height:Int,fps:Int,hostFormat:Bundle?):MediaCodec {
+            val errors=mutableListOf<Exception>()
+            for(candidate in candidates(hostFormat)){
+                if(runCatching{candidate.caps.videoCapabilities?.areSizeAndRateSupported(width,height,fps.toDouble())==true}.getOrDefault(false)){
+                    try{return MediaCodec.createByCodecName(candidate.info.name)}catch(t:Exception){errors.add(t)}
+                }
+            }
+            throw IllegalStateException("${"No available AVC Surface encoder for "}${width}${"x"}${height}${"@"}${fps}${" with host profile/level/mode"}").also{error->errors.forEach{error.addSuppressed(it)}}
+        }
+    }
+    private val codec=createCompatibleCodec(width,height,fps,hostFormat)
+    private val closed=AtomicBoolean(false)
+    private val producing=AtomicBoolean(true)
+    private val failureReported=AtomicBoolean(false)
+    private val writeDeadline=WriteDeadline(TimeUnit.SECONDS.toNanos(8))
+    private var watchdog:ScheduledExecutorService?=null
+    private val keyRequested=AtomicBoolean(false)
+    private val refreshGeneration=AtomicLong(1)
+    private val refreshLock=Any()
+    private val rateLock=Any()
+    private val pendingBitrate=AtomicInteger(0)
+    private val ratePolicy:VideoRatePolicy
+    val initialBitrate:Int
+    val encoderName:String get()=codec.name
+    val hardwareAccelerated:Boolean get()=codec.codecInfo.isHardwareAccelerated
+    @Volatile private var bitrateSupported=true
+    private var producer:Job?=null
+    private var consumer:Job?=null
+    private val scope=CoroutineScope(SupervisorJob()+Dispatchers.IO)
+    private data class Packet(val bytes:ByteArray,val config:Boolean,val key:Boolean,val generation:Long,val ptsMonoUs:Long?=null,val queuedAt:Long=System.nanoTime())
+    /** Encoded packets waiting for the socket. The capacity is how much a slow socket may
+     *  accumulate before the encoder is asked to wait: at 60fps twelve packets is about 200ms of
+     *  latency, which is the trade made here - bursts are tolerated, and a backlog that persists is
+     *  paid for in delay. */
+    private val queue=Channel<Packet>(12)
+    private val heartbeat=VideoIdleHeartbeat(IDLE_REPEAT_INTERVAL_MS)
+    /** Resubmits the current picture while the encoder is quiet, for a source that can repaint on
+     *  request. With no front surface built, this is the only repeat available. */
+    @Volatile var repeatFrame:(()->Unit)?=null
+    @Volatile private var recover=true
+    private val codecSurface:Surface
+    /** Null when EGL is unavailable here; the codec surface then goes straight to the picture source. */
+    private val front:EncoderFrontSurface?
+    val surface:Surface
+    init {
+        try {
+            val caps=codec.codecInfo.getCapabilitiesForType(MediaFormat.MIMETYPE_VIDEO_AVC)
+            require(requireNotNull(caps.videoCapabilities).areSizeAndRateSupported(width,height,fps.toDouble())){"Encoder cannot support negotiated size/FPS"}
+            val supportedRange=requireNotNull(caps.videoCapabilities).bitrateRange
+            val minimum=maxOf(1,supportedRange.lower)
+            val maximum=supportedRange.upper
+            require(minimum<=maximum){"No AVC bitrate intersection with configured range"}
+            ratePolicy=VideoRatePolicy(bitrate,minimum,maximum)
+            initialBitrate=ratePolicy.configure(bitrate)
+            val format=MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC,width,height).apply{
+                setInteger(MediaFormat.KEY_COLOR_FORMAT,MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
+                setInteger(MediaFormat.KEY_BIT_RATE,initialBitrate);setInteger(MediaFormat.KEY_FRAME_RATE,fps)
+                // Real-time projection: avoid reference reordering and B-frame latency.
+                setInteger(MediaFormat.KEY_MAX_B_FRAMES,0)
+                setInteger(MediaFormat.KEY_I_FRAME_INTERVAL,1)
+                setFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER,fps.toFloat())
+                // Repeat the previous frame after one frame interval, not after the heartbeat
+                // interval: this is what holds the output cadence at the configured frame rate when
+                // the picture source submits less often than that. Widening it to a second silently
+                // drops the output to whatever the source happens to produce. The still-picture
+                // heartbeat is a separate path ([repeatFrame]) and needs no stretched hint.
+                setLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER,(1_000_000L/fps).coerceAtLeast(1))
+            }
+            if(hostFormat!=null){
+                for(key in listOf("profile","level","bitrate-mode","i-frame-interval")){
+                    if(hostFormat.containsKey(key)){
+                        val v=hostFormat.getInt(key)
+                        when(key){
+                            "profile"->require(caps.profileLevels.any{it.profile==v}){"Unsupported host AVC profile"}
+                            "level"->require(caps.profileLevels.any{it.level>=v}){"Unsupported host AVC level"}
+                            "bitrate-mode"->require(requireNotNull(caps.encoderCapabilities).isBitrateModeSupported(v))
+                        };format.setInteger(key,v)
+                    }
+                }
+            }
+            codec.configure(format,null,null,MediaCodec.CONFIGURE_FLAG_ENCODE)
+            codecSurface=codec.createInputSurface();codec.start()
+        }catch(t:Throwable){codec.release();throw t}
+        // Only built on request: the front surface is what lets a still picture be resubmitted, but it
+        // also costs a full-screen blit per frame and a few frames of added latency, and a source that
+        // repaints on request needs neither.
+        front=if(frontSurface)EncoderFrontSurface.create(width,height,codecSurface){message->diagnostic(message,1)} else null
+        front?.setMinInterval(1_000_000_000L/fps)
+        surface=front?.surface?:codecSurface
+    }
+    /** True when a still picture has a way back into the encoder. */
+    private fun canRepeat()=front!=null||repeatFrame!=null
+    /** Resubmits the current picture through whichever path owns it. */
+    private fun repeatPicture(){
+        val frontSurface=front
+        if(frontSurface!=null)frontSurface.repeat() else repeatFrame?.invoke()
+    }
+    private fun reportFailure(t:Throwable){
+        if(!closed.get()&&failureReported.compareAndSet(false,true)){
+            // Cleanup joins workers; never invoke it from a worker that it must join.
+            Thread({if(!closed.get())failure(t)},"video-failure").apply{isDaemon=true;start()}
+        }
+    }
+    @Synchronized fun start(){
+        check(!closed.get()&&producer==null&&consumer==null){"Video encoder closed or already started"}
+        var stallStarted=0L
+        watchdog=Executors.newSingleThreadScheduledExecutor{r->Thread(r,"video-write-deadline").apply{isDaemon=true}}.also{timer->
+            timer.scheduleAtFixedRate({
+                val now=System.nanoTime()
+                val age=writeDeadline.ageNanos(now)
+                if(!closed.get()&&age!=null&&age>8_000_000_000L){
+                    // A blocked write alone does not distinguish a slow receiver from a failed
+                    // link. Report it while independent control/audio workers continue running.
+                    if(stallStarted==0L){
+                        stallStarted=now
+                        diagnostic(VideoDiagnosticLog.WRITE_STALLED_MS,age/1_000_000L)
+                    }
+                    if(now-stallStarted>60_000_000_000L){
+                        reportFailure(java.net.SocketTimeoutException("Video socket write stalled for 60 seconds"))
+                        runCatching{stopSend()}
+                    }
+                }else stallStarted=0L
+            },500,500,TimeUnit.MILLISECONDS)
+            // Still-picture heartbeat, on a fixed rate so the packet gap cannot drift with the
+            // encoder output. The repeat itself is cheap: the picture did not change, so the codec
+            // codes it as a skip P frame.
+            timer.scheduleAtFixedRate({
+                // Nothing to repeat means no heartbeat to run: reporting one would claim work that
+                // nobody performs.
+                if(!closed.get()&&producing.get()&&canRepeat()&&heartbeat.beat(System.nanoTime()/1_000_000)){
+                    // A refused repeat must not cancel the timer task itself.
+                    runCatching{diagnostic("idle-repeat",1);repeatPicture()}.onFailure{runCatching{diagnostic("idle-repeat-failed",1)}}
+                }
+            },IDLE_REPEAT_INTERVAL_MS,IDLE_REPEAT_INTERVAL_MS,TimeUnit.MILLISECONDS)
+        }
+        consumer=scope.launch {
+            // Queue latency remains controlled by backpressure. The gate here is solely the
+            // config/actual-IDR dependency gate, so it does not add a second age-drop policy.
+            val delivery=VideoDeliveryGate(Long.MAX_VALUE)
+            var generation=0L
+            try {
+                for(packet in queue){
+                    if(packet.generation!=refreshGeneration.get()){diagnostic("dropped",1);continue}
+                    if(generation!=packet.generation){delivery.reset();generation=packet.generation}
+                    val age=(System.nanoTime()-packet.queuedAt)/1_000_000
+                    diagnostic("queue-ms",age)
+                    if(delivery.decide(packet.config,packet.key,age)!=VideoDeliveryGate.Decision.SEND){diagnostic("dropped",1);continue}
+                    // Keep the complete reference chain, including the animation's final frame.
+                    // Bounded backpressure applies upstream instead of abandoning pending pictures.
+                    val started=System.nanoTime()
+                    val ticket=writeDeadline.begin(started)
+                    try{send(packet.bytes,packet.config,packet.ptsMonoUs)}finally{writeDeadline.complete(ticket)}
+                    val writeMs=(System.nanoTime()-started)/1_000_000
+                    diagnostic("write-ms",writeMs)
+                    if(!packet.config){
+                        metric(packet.bytes.size)
+                        synchronized(rateLock){if(bitrateSupported)ratePolicy.sample(System.nanoTime()/1_000_000,age,writeMs)?.let{pendingBitrate.set(it)}}
+                    }
+                }
+            }catch(t:Exception){if(!closed.get())reportFailure(t)}
+        }
+        producer=scope.launch {
+            val configuration=AvcConfiguration()
+            val timeline=SurfaceFrameTimeline()
+            // Builds the configuration packet and arms recovery without ever blocking, so it is safe
+            // to call while a codec output buffer is still held. The caller sends it afterwards.
+            fun configurationPacket():Packet?{
+                val changed=configuration.takeChanged()?:return null
+                recover=true;requestIdr()
+                return Packet(VideoWire.config(changed,width,height),true,false,refreshGeneration.get())
+            }
+            try {
+                val info=MediaCodec.BufferInfo()
+                while(isActive&&!closed.get()&&producing.get()){
+                    val requestedRate=pendingBitrate.getAndSet(0)
+                    if(requestedRate>0&&bitrateSupported){
+                        try{
+                            codec.setParameters(Bundle().apply{putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE,requestedRate)})
+                            diagnostic("bitrate-applied",requestedRate.toLong())
+                        }catch(t:IllegalArgumentException){bitrateSupported=false;diagnostic("bitrate-rejected",requestedRate.toLong())}
+                    }
+                    val requestedGeneration=synchronized(refreshLock){
+                        if(keyRequested.getAndSet(false))refreshGeneration.get() else null
+                    }
+                    if(requestedGeneration!=null){
+                        // A force-keyframe/source refresh invalidates queued dependencies. Re-send
+                        // this encoder's current configuration before accepting an actual IDR.
+                        configuration.current()?.let{queue.send(Packet(VideoWire.config(it,width,height),true,false,requestedGeneration))}
+                        try{codec.setParameters(Bundle().apply{putInt(MediaCodec.PARAMETER_KEY_REQUEST_SYNC_FRAME,0)})}
+                        catch(t:IllegalArgumentException){diagnostic("idr-rejected",1)}
+                    }
+                    val outputGeneration=refreshGeneration.get()
+                    val i=codec.dequeueOutputBuffer(info,10000)
+                    if(i==MediaCodec.INFO_OUTPUT_FORMAT_CHANGED){
+                        val f=codec.outputFormat
+                        fun bytes(buffer:ByteBuffer)=ByteArray(buffer.remaining()).also{buffer.duplicate().get(it)}
+                        for(name in listOf("csd-0","csd-1"))f.getByteBuffer(name)?.let{configuration.ingest(bytes(it))}
+                        configurationPacket()?.let{queue.send(it)}
+                    }else if(i>=0){
+                        // Nothing below the release may block: holding a codec output buffer while
+                        // waiting on a slow socket stalls the encoder for no reason. The frame bytes
+                        // are already copied out, so hand the buffer back first, queue afterwards.
+                        var configPacket:Packet?=null
+                        var framePacket:Packet?=null
+                        try {
+                            if(info.size>0){
+                                val buf=requireNotNull(codec.getOutputBuffer(i)).duplicate().apply{position(info.offset);limit(info.offset+info.size)}
+                                val data=ByteArray(info.size).also{buf.get(it)}
+                                val type=data[0].toInt() and 31
+                                val units=if(type==7||type==8)listOf(data) else VideoWire.splitNal(data)
+                                configuration.ingestUnits(units)
+                                configPacket=configurationPacket()
+                                // One pass, one NAL type read per unit, no intermediate list:
+                                // this runs for every encoded frame.
+                                val frameUnits=ArrayList<ByteArray>(units.size)
+                                var picture=false;var key=false
+                                for(unit in units){
+                                    val unitType=unit[0].toInt() and 31
+                                    if(unitType==7||unitType==8)continue
+                                    frameUnits+=unit
+                                    if(unitType in 1..5)picture=true
+                                    if(unitType==5)key=true
+                                }
+                                if(picture){
+                                    val ptsMonoUs=timeline.map(info.presentationTimeUs,System.nanoTime()/1000)
+                                    diagnostic("encoded",1)
+                                    if(configuration.ready()&&(!recover||key)){
+                                        framePacket=Packet(VideoWire.lengthPrefixed(frameUnits),false,key,configPacket?.generation?:outputGeneration,ptsMonoUs)
+                                    }else diagnostic("dropped",1)
+                                }
+                            }
+                        }finally{codec.releaseOutputBuffer(i,false)}
+                        configPacket?.let{queue.send(it)}
+                        framePacket?.let{queue.send(it);if(it.key&&it.generation==refreshGeneration.get())recover=false;heartbeat.frame(System.nanoTime()/1_000_000)}
+                    }
+                }
+            }catch(t:Exception){if(!closed.get())reportFailure(t)}
+        }
+    }
+    fun setFrameRate(value:Int):Boolean {
+        require(value>0)
+        if(closed.get()||!producing.get())return false
+        return runCatching{
+            codec.setParameters(Bundle().apply{
+                putFloat(MediaFormat.KEY_MAX_FPS_TO_ENCODER,value.toFloat())
+                putInt(MediaFormat.KEY_FRAME_RATE,value)
+                // The repeat hint is an absolute time, so it has to follow the frame rate as well:
+                // leaving it at the value derived from the original rate keeps the old cadence alive
+                // and contradicts the input limit set just above.
+                putLong(MediaFormat.KEY_REPEAT_PREVIOUS_FRAME_AFTER,(1_000_000L/value).coerceAtLeast(1))
+            })
+            // The codec is free to ignore the frame-rate parameters above - this device does - so the
+            // front surface enforces the rate where it can be enforced: by not submitting frames
+            // faster than this.
+            front?.setMinInterval(1_000_000_000L/value)
+            requestIdr()
+            true
+        }.getOrDefault(false)
+    }
+
+    fun setBitrate(value:Int):Boolean {
+        require(value>0)
+        if(closed.get()||!producing.get()||!bitrateSupported)return false
+        synchronized(rateLock){pendingBitrate.set(ratePolicy.configure(value))}
+        return true
+    }
+    fun requestIdr():Boolean {
+        if(closed.get()||!producing.get())return false
+        synchronized(refreshLock){
+            if(!keyRequested.get()){
+                recover=true;refreshGeneration.incrementAndGet();keyRequested.set(true);diagnostic("idr",1)
+            }
+        }
+        return true
+    }
+    @Synchronized override fun close(){
+        if(!closed.compareAndSet(false,true))return
+        producing.set(false);watchdog?.shutdownNow()
+        // A normal stop/failure must unblock a socket write before joining its writer.
+        runCatching{stopSend()}
+        scope.cancel();queue.cancel()
+        runBlocking{producer?.join();consumer?.join()}
+        runCatching{front?.close()}
+        runCatching{codec.stop()};runCatching{codec.release()};runCatching{codecSurface.release()}
+    }
+}

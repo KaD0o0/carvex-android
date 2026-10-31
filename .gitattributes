@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jar binary
+*.plist binary
+# Unified diff context lines retain a space even when their source line is empty.
+docs/evidence/*.patch whitespace=-blank-at-eol

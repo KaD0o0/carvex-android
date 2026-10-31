@@ -1,0 +1,170 @@
+<resources>
+    <string name="app_name">CarVeX</string>
+    <string name="device_connected">%1$s connected</string>
+    <string name="device_disconnected">%1$s disconnected</string>
+    <string name="device_connect_failed">Could not connect to %1$s</string>
+    <string name="test_passed">Test passed, %1$d ms</string>
+    <string name="keep_one_method">Keep at least one method on</string>
+    <string name="method_not_supported">%1$s is not available for this bridge</string>
+    <string name="disconnect_failed">Disconnect failed</string>
+    <string name="session_ping_unavailable">The active session does not expose a standalone ping</string>
+    <string name="log_title">Bridge diagnostics</string>
+    <string name="required_permission_error">Required permissions are missing</string>
+    <string name="scan_failed">Device scan failed</string>
+    <string name="phone_mac">Phone Bluetooth MAC</string>
+    <string name="phone_mac_supporting">Required by the CarPlay identity handshake. Enter the real uppercase address.</string>
+    <string name="read_phone_mac">Read with Shizuku</string>
+    <string name="phone_mac_invalid">Enter a complete Bluetooth MAC address</string>
+    <string name="shizuku_not_available">Shizuku is not available</string>
+    <string name="shizuku_permission_requested">Shizuku permission requested</string>
+    <string name="phone_mac_read_failed">Could not read the phone Bluetooth MAC</string>
+    <string name="phone_mac_read">Phone Bluetooth MAC updated</string>
+    <string name="log_app_started">App started</string>
+    <string name="log_scan_result">Scan, %1$d devices found</string>
+    <string name="log_connect_via">Connect to %1$s via %2$s</string>
+    <string name="log_disconnect_device">Disconnect %1$s</string>
+    <string name="log_test_device">Test %1$s</string>
+    <string name="log_settings_changed">Settings changed</string>
+
+    <!-- Compose UI strings. Keep the default locale English; values-zh-rCN provides Simplified Chinese. -->
+    <string name="nav_devices">Devices</string>
+    <string name="nav_settings">Settings</string>
+    <string name="action_back">Back</string>
+    <string name="screen_manage">Manage</string>
+    <string name="screen_logs">Logs</string>
+    <string name="permissions_needed">Permissions needed</string>
+    <string name="permissions_body">Allow nearby device, network and notification access so scanning and connection status work correctly.</string>
+    <string name="grant_permissions">Grant permissions</string>
+    <string name="just_now">just now</string>
+    <string name="seconds_ago">%1$d seconds ago</string>
+    <string name="minutes_ago">%1$d min ago</string>
+    <string name="devices_last_scan">Last scan %1$s. This device: %2$s</string>
+    <string name="one_device_limit">Only one device can be connected at a time.</string>
+    <string name="nearby_devices">Nearby devices</string>
+    <string name="devices_scanning">Scanning devices</string>
+    <string name="devices_scanning_body">Checking paired Bluetooth devices…</string>
+    <string name="devices_missing_permission_title">Permission required</string>
+    <string name="devices_missing_permission_body">Grant the permissions above to show paired devices.</string>
+    <string name="devices_empty_title">No paired devices</string>
+    <string name="devices_empty_body">Pair a device in Android Settings, then tap refresh.</string>
+    <string name="refresh_devices">Refresh devices</string>
+    <string name="action_connect">Connect</string>
+    <string name="action_disconnect">Disconnect</string>
+    <string name="action_stop">Stop</string>
+    <string name="status_version_progress">%1$s · %2$s</string>
+    <string name="status_connected_progress">Connected · %1$s</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_not_connected">Not connected</string>
+    <string name="status_no_device">No device</string>
+    <string name="status_choose_device">Choose a device below</string>
+    <string name="status_connected_via">Connected via %1$s</string>
+    <string name="status_using_method">Using %1$s</string>
+    <string name="status_device_detail">%1$s, %2$d ms. Tap to manage</string>
+    <string name="status_device_detail_plain">%1$s, %2$d ms</string>
+    <string name="status_device_detail_pending">%1$s. Tap to manage</string>
+    <string name="screen_no_device">No device selected</string>
+    <string name="screen_connect_device">Connect a device to manage it</string>
+    <string name="section_connection">Connection</string>
+    <string name="field_method">Method</string>
+    <string name="field_signal">Signal</string>
+    <string name="field_latency">Latency</string>
+    <string name="milliseconds_short">%1$d ms</string>
+    <string name="latency_pending">Waiting for session data</string>
+    <string name="field_address">Address</string>
+    <string name="field_connected_for">Connected for</string>
+    <string name="connected_for_value">%1$d min %2$d s</string>
+    <string name="section_this_device">This device</string>
+    <string name="field_device_name">Device name</string>
+    <string name="device_name_supporting">Other devices see this name.</string>
+    <string name="auto_connect_device">Auto-connect to this device</string>
+    <string name="notify_disconnect">Notify if it disconnects</string>
+    <string name="action_run_test">Run test</string>
+    <string name="action_change_method">Change method</string>
+    <string name="action_copy">Copy</string>
+    <string name="action_export">Export</string>
+    <string name="log_exported">Log exported</string>
+    <string name="log_export_failed">Export failed</string>
+    <string name="log_copied">Log copied</string>
+    <string name="log_cleared">Logs cleared</string>
+    <string name="logs_hint">Swipe sideways to read long lines</string>
+    <string name="unfold_all">Unfold all</string>
+    <string name="fold_all">Fold all</string>
+    <string name="action_fold">Fold</string>
+    <string name="action_unfold">Unfold</string>
+    <string name="change_method_for">Change method for %1$s</string>
+    <string name="connect_to">Connect to %1$s</string>
+    <string name="how_connect">How do you want to connect?</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="method_disabled">Turned off in Settings</string>
+    <string name="settings_device_name_supporting">Other devices see this name.</string>
+    <string name="settings_auto_reconnect">Auto-reconnect</string>
+    <string name="settings_connect_on_launch">Connect on launch</string>
+    <string name="settings_keep_screen_on">Keep screen on</string>
+    <string name="settings_scan_interval">Scan interval</string>
+    <string name="seconds_short">%1$d s</string>
+    <string name="settings_connect_using">Connect using</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_logs_supporting">View, copy and export</string>
+    <string name="settings_clear_logs">Clear logs</string>
+    <string name="settings_clear_logs_supporting">Delete all saved bridge diagnostics</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="method_bluetooth">CarPlay-Bluetooth</string>
+    <string name="method_bluetooth_hint">Nearby, low power</string>
+    <string name="method_wifi">CarPlay-WIFI</string>
+    <string name="method_wifi_hint">Same network, fast</string>
+    <string name="method_usb">CarPlay-USB</string>
+    <string name="method_usb_hint">Cable, most reliable</string>
+    <string name="signal_strong">Strong signal</string>
+    <string name="signal_medium">Medium signal</string>
+    <string name="signal_weak">Weak signal</string>
+    <string name="signal_paired">Paired device</string>
+
+    <!--
+      AppTheme：Activity 的窗口主题。
+
+      这里只负责"窗口级"的三件事，界面本身全部由 Compose 画：
+        · 无 ActionBar（我们自己的 Compose 顶栏）；
+        · 窗口底色（第一帧到 Compose 首次绘制之间的过渡色）；
+        · 状态栏图标深浅。
+
+      ⚠️ 关于 windowBackground 的一个真实问题：
+        原来是写死的 #101B38 —— 那是**改紫罗兰主题之前**的深蓝。
+        后果：冷启动时先闪一下蓝色，Compose 才画出紫色的背景。
+        现在分成 values / values-night 两份，各自取与 App 背景相近的色：
+          浅色 #FAF9FD（与 LightFallback.background 同）
+          深色 #150E33（与暗色表面同族）
+        这样启动到首帧的过渡是"同色系"，不会闪出不相干的颜色。
+
+      ⚠️ 关于 windowLightStatusBar：
+        原来写死 false（状态栏图标永远浅色）。但 App 支持浅色主题 ——
+        浅色主题下状态栏图标必须是深色，否则白底白字看不见。
+        这里删掉它，交给 enableEdgeToEdge(SystemBarStyle.auto(...)) 决定：
+        那个 API 本来就会按明暗自动切换图标深浅，写死反而覆盖了它。
+
+      ⚠️ 不要在这里设 windowLayoutInDisplayCutoutMode：
+        enableEdgeToEdge() 已经设成 LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS，
+        它让内容可以铺到挖孔区（我们要的沉浸感）。
+        真正的"内容别被挖孔遮住"由 Compose 的 safeDrawing 内边距负责，
+        不是在窗口层面限制。
+    -->
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#7A4FCF</item>
+        <item name="android:windowBackground">@color/windowBackground</item>
+    </style>
+
+    <!--
+      权限页不显示任何内容，只铺一层和主页相同的背景（在 Compose 里画）。不要做成透明：
+      透明会直接看穿到底下的页面，看上去像一块飘着的板。
+      窗口底色取与 AppTheme 同一个资源，免得第一帧闪白。
+    -->
+    <style name="PermissionTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/windowBackground</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
+    <string name="experimental_auth">实验认证</string>
+    <string name="experimental_auth_supporting">使用实验连接流程，保留本次挑战签名、配对签名与加密数据校验；不代表已通过正式证书链认证。</string>
+    <string name="airplay_security_automatic">安全流程由程序按内部支持配置自动选择；缺少适用配置或认证材料时会说明原因。</string>
+</resources>

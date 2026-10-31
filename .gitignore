@@ -1,0 +1,21 @@
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.tools/
+# 签名材料公开：.signing/keystore.properties 与 release.jks 随仓库分发，用于可复现构建。
+artifacts/
+# assembleRelease 的产物（APK、mapping.txt、output-metadata.json），不属源码。
+app/release/
+app/*/release/
+*.log
+
+# Local JDK, Android SDK and Gradle cache
+local-build/
+
+# Python 缓存（tools/*.py 本地工具运行时会生成）
+__pycache__/
+*.pyc
+
+# IDE 工程文件：Android Studio 本地生成，路径含本机项目名，不进仓库。
+.idea/

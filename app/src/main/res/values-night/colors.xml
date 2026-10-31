@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  窗口底色（深色模式，values-night）。
+
+  与 App 深色主题的 surface 同族（DarkFallback.surface = #101410、
+  schemeFromSeed 的深色 tone 起点 #05070A）。
+  取 #150E33 是与图标的深色底一致的紫黑，冷启动到首帧不会闪色。
+-->
+<resources>
+    <color name="windowBackground">#150E33</color>
+</resources>

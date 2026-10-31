@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标背景层：近白底的极淡对角渐变（亮色风格）。
+
+  与默认主题色（紫罗兰 #7A4FCF）统一，且与 App 浅色模式的白底调性一致。
+
+  配色演进：
+    深蓝底 + 薄荷绿弧 → 色相与紫罗兰相差 180°，像两个产品；
+    深紫底 + 亮紫弧   → 色相对了，但整体偏暗，与浅色主题相反；
+    近白底 + 紫弧     → 现在这版，亮色、且缩到 48dp 仍然清楚。
+
+  底色不是纯白，而是 #FFFFFF → #FAF9FD：
+  纯白在部分 launcher 的白色背景上会"消失"、看不出图标边界，
+  留一丝紫调能保住轮廓。差异极小（L 1.000 → 0.952），不会显脏。
+
+  108dp 画布是自适应图标的规定尺寸，只有中间 72dp 一定可见
+  （外围 18dp 会被各家 launcher 按自己的形状裁掉），所以背景要铺满整块。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="108" android:endY="108">
+                <item android:offset="0.0" android:color="#FFFFFFFF" />
+                <item android:offset="0.55" android:color="#FFFDFCFF" />
+                <item android:offset="1.0" android:color="#FFFAF9FD" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

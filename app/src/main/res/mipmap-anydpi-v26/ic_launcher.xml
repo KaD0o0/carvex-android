@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（API 26+）：背景与前景分层，由 launcher 决定最终形状
+  （圆形 / 方形 / squircle 都由此适配，不再被系统套一个白底方块）。
+
+  <monochrome> 是给 Android 13+ 的"主题图标"用的：
+  系统会用单色版本重新着色，跟随用户的壁纸配色。
+-->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_bridge_background" />
+    <foreground android:drawable="@drawable/ic_bridge_foreground" />
+    <monochrome android:drawable="@drawable/ic_bridge_monochrome" />
+</adaptive-icon>

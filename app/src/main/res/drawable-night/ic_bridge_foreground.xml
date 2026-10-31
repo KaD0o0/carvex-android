@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标前景层 · 深色版（night 限定符）。
+
+  与 ic_bridge_foreground.xml 同一条路径、同一线宽，只换渐变颜色：
+    亮色版：#563496 → #B9A0EB（深紫 → 亮紫，在近白底上对比 9:1）
+    深色版：#926FD8 → #B9A0EB（在深紫底上对比 4.8~8.1:1）
+
+  ⚠️ 深色版为什么不用 primary #7A4FCF 本身当暗端：
+    它与底最暗端 #150E33 的对比只有 **3.4:1** —— 刚过 WCAG 非文字图形
+    3:1 的线，在深色壁纸上左下半段（弧线起点那一侧）会显得糊。
+    这里改成**提亮 0.18** 的 #926FD8（对比 4.8:1）：
+    仍是肉眼一眼认得的"同一个紫"，但暗处立得住。
+
+  关于 night 限定符的实际生效范围，见 drawable-night/ic_bridge_background.xml 的说明 ——
+  它不是官方机制，行为因 launcher 而异，属于增强而非依赖。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M33.14,62.68 C51.58,47.08 49.49,74.85 60.47,74.86 C76.73,74.87 67.24,42.39 74.86,33.14"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="33.14" android:startY="62.68"
+                android:endX="74.86" android:endY="33.14">
+                <item android:offset="0.0" android:color="#FF926FD8" />
+                <item android:offset="1.0" android:color="#FFB9A0EB" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

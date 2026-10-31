@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  单色层（Android 13+ 主题图标）：形状必须与 ic_bridge_foreground **完全一致**，
+  否则开启主题图标后会突然换成一个不相干的图案。
+  同一条两段贝塞尔，只去掉渐变（系统会统一着色）。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path
+        android:pathData="M33.14,62.68 C51.58,47.08 49.49,74.85 60.47,74.86 C76.73,74.87 67.24,42.39 74.86,33.14"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#FFFFFFFF"
+        android:fillColor="@android:color/transparent" />
+</vector>

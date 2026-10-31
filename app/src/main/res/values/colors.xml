@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  窗口底色（浅色模式）。
+
+  用途：从冷启动到 Compose 画出第一帧之间，窗口显示的就是这个颜色。
+  取值刻意贴近 App 浅色主题的背景（LightFallback.background = #F7FBF3
+  与 schemeFromSeed 的 tone(0.97) 一带），这样启动过程不会闪出别的色。
+
+  历史：这里原来写死 #101B38（深蓝）—— 那是改紫罗兰主题**之前**的配色，
+  于是冷启动会先闪一下蓝再变紫。分包成 values/values-night 之后就没有这问题了。
+-->
+<resources>
+    <color name="windowBackground">#FAF9FD</color>
+</resources>

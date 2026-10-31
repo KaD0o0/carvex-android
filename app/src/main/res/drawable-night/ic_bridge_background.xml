@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标背景层 · 深色版（night 限定符）。
+
+  与 ic_bridge_background.xml 结构完全相同，只换配色：
+    亮色版：#FFFFFF → #FAF9FD（近白）
+    深色版：#241A52 → #150E33（深紫，与 App 深色主题的 surface 阶梯同源）
+
+  关于 night 限定符的**真实能力**（别抱过高期待）：
+    · 这不是 Android 官方的"图标跟随深色模式"机制 —— 官方只有 <monochrome>（13+ 主题图标）；
+    · launcher 跨进程加载图标，各家对 uiMode 变化的处理不一致，
+      有的会重建资源、有的缓存图标不刷新；
+    · 所以**行为因 launcher 而异**：小米/原生等支持的机型会跟随系统深色模式切换，
+      不支持的机型就继续用默认（亮色）版 —— 不会出错，只是不切换。
+
+  因此这属于"能做就做"的增强，不是可以依赖的能力。
+  真正保证图标在任何壁纸/模式下都能看清的，是**自身对比度**（当前 9:1），
+  而不是这个 night 变体。
+
+  108dp 画布是自适应图标的规定尺寸，只有中间 72dp 一定可见
+  （外围 18dp 会被各家 launcher 按自己的形状裁掉），所以背景要铺满整块。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0" android:startY="0"
+                android:endX="108" android:endY="108">
+                <item android:offset="0.0" android:color="#FF241A52" />
+                <item android:offset="0.55" android:color="#FF1C1442" />
+                <item android:offset="1.0" android:color="#FF150E33" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

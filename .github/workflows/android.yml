@@ -1,0 +1,178 @@
+name: Android signed APK
+on:
+  push:
+    branches: [main]
+  # PR 也要跑同一条流水线：此前只有 push 到 main 才验证，PR 处于零校验状态。
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      COMMIT_SHA: ${{ github.sha }}
+      KEYSTORE_PATH: ${{ github.workspace }}/.signing/release.jks
+      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # versionCode comes from `git rev-list --count HEAD`, so real history is required.
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Cache required Android SDK packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/platforms/android-37.0
+            /usr/local/lib/android/sdk/build-tools/36.0.0
+          key: android-sdk-${{ runner.os }}-${{ runner.arch }}-api37.0-tools36.0.0-v1
+      - name: Ensure required Android SDK packages
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$ANDROID_HOME/platforms/android-37.0/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]]; then
+            sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+          fi
+      # 签名材料只在能拿到 secret 的场合准备（push 到 main / 手动触发）。
+      # fork 发来的 PR 拿不到 ANDROID_KEYSTORE_BASE64，这一跳若硬失败会让每个外部 PR 都红，
+      # 而 PR 真正需要的是"测试与 lint 跑起来"，不是"出一个已签名的包"。
+      - name: Validate fixed signing identity
+        if: github.event_name != 'pull_request'
+        env:
+          STORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for item in STORE_B64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [[ -z "${!item:-}" ]]; then
+              echo "::error::Missing signing secret: $item"
+              exit 1
+            fi
+          done
+          mkdir -p .signing artifacts
+          printf '%s' "$STORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          # Gradle derives the runtime fingerprint from this keystore, so only confirm the alias exists.
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null
+          # Packaging reads .signing/keystore.properties, not environment variables, so the CI path
+          # and an Android Studio build share exactly one signing configuration.
+          {
+            echo "storeFile=$KEYSTORE_PATH"
+            echo "storePassword=$KEYSTORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > .signing/keystore.properties
+          chmod 600 .signing/keystore.properties
+      # PR 不签名：generateReleaseBuildConfig 需要 SIGNING_FP，因此只准备一份临时 debug 密钥库，
+      # 让配置阶段能通过；它签出来的包不被任何东西信任，也不会被发布。
+      - name: Prepare throwaway keystore for pull requests
+        if: github.event_name == 'pull_request'
+        shell: bash
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          mkdir -p .signing artifacts
+          keytool -genkeypair -keystore .signing/release.jks -storetype JKS \
+            -storepass pullrequest -keypass pullrequest -alias pr -keyalg RSA -keysize 2048 \
+            -validity 1 -dname "CN=PR verification only" > /dev/null 2>&1
+          {
+            echo "storeFile=.signing/release.jks"
+            echo "storePassword=pullrequest"
+            echo "keyAlias=pr"
+            echo "keyPassword=pullrequest"
+          } > .signing/keystore.properties
+          chmod 600 .signing/keystore.properties
+      - name: Unit tests, Android Lint, signed APK
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          # 模块拆分后，测试随被测代码分布在多个模块，必须逐个点名才会执行
+          # （Gradle 不会自动跑依赖模块的测试：:app 只以 implementation 依赖它们，
+          #  不会把 test 任务传递上去）。
+          ./gradlew :protocol-carplay:testDebugUnitTest :pcm-core:test :host-api:test \
+            :bridge:testDebugUnitTest :host-carlife-mixing:testDebugUnitTest \
+            :app:testXiaomiDebugUnitTest :app:testOppoDebugUnitTest :app:testVivoDebugUnitTest \
+            :app:testSamsungDebugUnitTest :app:testHonorDebugUnitTest \
+            :app:lintRelease :app:assembleRelease \
+            --build-cache --parallel --configuration-cache --stacktrace --console=plain 2>&1 | tee artifacts/build.log
+      - name: Verify APK and write metadata
+        run: |
+          set -euo pipefail
+          : > artifacts/apk-signature.txt
+          for BRAND in xiaomi oppo vivo samsung honor; do
+            APKS=(app/build/outputs/apk/"${BRAND}"/release/CarVex_"${BRAND}"_release_*.apk)
+            [[ ${#APKS[@]} -eq 1 && -f "${APKS[0]}" ]]
+            APK="artifacts/$(basename "${APKS[0]}")"
+            cp "${APKS[0]}" "$APK"
+            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" >> artifacts/apk-signature.txt
+          done
+          (cd artifacts && sha256sum *.apk > SHA256SUMS)
+          # Read the version back out of the APK: the build derives it from the checkout, so this
+          # is the one value that cannot disagree with what actually shipped.
+          BADGING=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging artifacts/CarVex_xiaomi_release_*.apk)
+          VERSION_CODE=$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
+          VERSION_NAME=$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")
+          printf 'Commit: %s\nBuild: %s\nVersion code: %s\nVersion name: %s\nRun: %s\n' \
+            "$COMMIT_SHA" "$BUILD_NUMBER" "$VERSION_CODE" "$VERSION_NAME" \
+            "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > artifacts/build-info.txt
+          printf '### Signed experimental APK\n\n- Commit: %s\n- Build: %s\n- Version code: %s (%s)\n- Video, touch and compatibility require vehicle acceptance.\n- Vehicle audio and microphone are source-integrated and await in-vehicle acceptance.\n' \
+            "$COMMIT_SHA" "$BUILD_NUMBER" "$VERSION_CODE" "$VERSION_NAME" >> "$GITHUB_STEP_SUMMARY"
+      - name: Save build result and log location
+        if: always()
+        env:
+          RESULT: ${{ job.status }}
+        run: |
+          mkdir -p artifacts
+          printf 'Result: %s\nCommit: %s\nBuild: %s\nFull logs: https://github.com/%s/actions/runs/%s\n' \
+            "$RESULT" "$COMMIT_SHA" "$BUILD_NUMBER" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > artifacts/build-status.txt
+      - name: Reports and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ github.run_number }}
+          path: |
+            artifacts/build.log
+            artifacts/build-status.txt
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 30
+      - name: APK download
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.run_number }}
+          path: |
+            artifacts/*.apk
+            artifacts/SHA256SUMS
+            artifacts/build-info.txt
+            artifacts/apk-signature.txt
+          retention-days: 90
+      # 只在 push 到 main / 手动触发时发布：PR（尤其来自 fork 的 PR）拿不到 contents: write，
+      # 无条件 create release 会让每个 PR 都红。PR 仍然会跑测试、lint 与打包，只是不发版。
+      - name: Publish downloadable experimental build
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${BUILD_NUMBER}" artifacts/*.apk artifacts/SHA256SUMS artifacts/build-info.txt \
+            --target "$COMMIT_SHA" --title "Experimental build ${BUILD_NUMBER}" --prerelease \
+            --notes "Signed build from ${COMMIT_SHA}. Android 10+. Protocol/UI build for vehicle validation. Vehicle audio and microphone transfer are not implemented. Follow README and docs/ACCEPTANCE.zh-CN.md."
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f .signing/release.jks .signing/keystore.properties
+
+
