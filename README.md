@@ -149,7 +149,8 @@ Release 构建开启 R8 与资源压缩。Lint 配置为 `abortOnError = true`�
 
 `.github/workflows/android.yml` 在推送 `main`、Pull Request 和手动触发时运行。它会执行
 `:protocol-carplay`、`:pcm-core`、`:host-api`、`:bridge`、`:host-carlife-mixing` 以及
-五个 app flavor 的测试，然后运行 `:app:lintRelease`、`:app:assembleRelease`，并校验
+五个 app flavor 的测试，然后运行五个 flavor 各自的 lint（`:app:lintXiaomiRelease`
+等；`:app` 有 flavor 后没有聚合的 `lintRelease`）、`:app:assembleRelease`，并校验
 产出的 APK。
 
 CI 直接使用仓库内公开的 `.signing/keystore.properties` 与 `.signing/release.jks`，

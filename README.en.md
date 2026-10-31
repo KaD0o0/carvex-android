@@ -165,7 +165,8 @@ Release builds enable R8 and resource shrinking. Lint is configured with
 
 The workflow at `.github/workflows/android.yml` runs on pushes to `main`, on pull requests
 and manually. It runs tests for `:protocol-carplay`, `:pcm-core`, `:host-api`, `:bridge`,
-`:host-carlife-mixing` and all five app flavors, then `:app:lintRelease`,
+`:host-carlife-mixing` and all five app flavors, then lint for each flavor
+(`:app:lintXiaomiRelease` and so on; with flavors there is no aggregate `lintRelease`),
 `:app:assembleRelease`, and verifies the produced APKs.
 
 CI uses the public `.signing/keystore.properties` and `.signing/release.jks` tracked in

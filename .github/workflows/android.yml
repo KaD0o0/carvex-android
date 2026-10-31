@@ -55,31 +55,58 @@ jobs:
           mkdir -p artifacts
           echo "Using tracked signing material from .signing/"
 
+      - name: Gradle preflight
+        run: |
+          set -euo pipefail
+          chmod +x gradlew
+          java -version
+          ./gradlew --version
+
       - name: Unit tests, Android Lint, signed APK
         run: |
-          # 不启用 -e：这里要靠 PIPESTATUS 区分 Gradle 与 tee 的退出码，并把失败原因写进
-          # Step Summary；否则 Actions 页面只会显示 "exit code 1"，看不到具体是哪个任务失败。
+          # runner 以 bash -e 启动，必须显式 +e：否则流水线一失败脚本就退出，
+          # 后面的 PIPESTATUS 判定与失败注释都执行不到。
+          set +e
           set -uo pipefail
           chmod +x gradlew
           mkdir -p artifacts
           # 模块拆分后，测试随被测代码分布在多个模块，必须逐个点名才会执行
           # （Gradle 不会自动跑依赖模块的测试：:app 只以 implementation 依赖它们，
           #  不会把 test 任务传递上去）。
+          # lint 同理：:app 有五个 flavor，AGP 只生成 lint<Brand>Release，没有聚合的
+          # lintRelease——写 lintRelease 会在任务选择阶段直接报 ambiguous。
           ./gradlew :protocol-carplay:testDebugUnitTest :pcm-core:test :host-api:test \
             :bridge:testDebugUnitTest :host-carlife-mixing:testDebugUnitTest \
             :app:testXiaomiDebugUnitTest :app:testOppoDebugUnitTest :app:testVivoDebugUnitTest \
             :app:testSamsungDebugUnitTest :app:testHonorDebugUnitTest \
-            :app:lintRelease :app:assembleRelease \
+            :app:lintXiaomiRelease :app:lintOppoRelease :app:lintVivoRelease \
+            :app:lintSamsungRelease :app:lintHonorRelease \
+            :app:assembleRelease \
             --build-cache --parallel --configuration-cache --stacktrace --console=plain 2>&1 | tee artifacts/build.log
-          status="${PIPESTATUS[0]}"
+          # PIPESTATUS[0] 是 Gradle，[1] 是 tee。tee 失败（例如目录不存在）也要单独暴露出来。
+          gradle_status="${PIPESTATUS[0]}"
+          tee_status="${PIPESTATUS[1]:-0}"
+          status="$gradle_status"
+          if [[ "$gradle_status" -eq 0 && "$tee_status" -ne 0 ]]; then
+            status="$tee_status"
+          fi
           if [[ "$status" -ne 0 ]]; then
+            excerpt="$(grep -n -E 'FAILURE:|What went wrong|^e: |error:|Lint found [0-9]+ error' -A 20 artifacts/build.log 2>/dev/null | tail -n 60)"
+            [[ -n "$excerpt" ]] || excerpt="$(tail -n 60 artifacts/build.log 2>/dev/null)"
             {
               echo '### Gradle failed'
               echo ''
+              echo "\`gradle=${gradle_status} tee=${tee_status}\`"
+              echo ''
               echo '```text'
-              grep -n -E 'FAILURE:|What went wrong|^e: |Lint found [0-9]+ error|^\* What went wrong' -A 25 artifacts/build.log | tail -n 150 || tail -n 150 artifacts/build.log
+              printf '%s\n' "$excerpt"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
+            # check-run 注释是匿名可读的，日志不是。把前几行错误压成一行发出去，
+            # 这样失败原因不依赖人工下载 artifacts。
+            msg="$(printf '%s\n' "$excerpt" | grep -v '^[[:space:]]*$' | head -n 8 \
+              | tr '\n' ' ' | tr -s ' ' | cut -c1-900 | sed 's/%/%25/g')"
+            echo "::error title=Gradle failed (gradle=${gradle_status}, tee=${tee_status})::${msg}"
           fi
           exit "$status"
       - name: Verify APK and write metadata

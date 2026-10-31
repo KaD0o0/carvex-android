@@ -158,8 +158,13 @@ All flavors and release checks:
 ```powershell
 .\gradlew.bat :app:testXiaomiDebugUnitTest :app:testOppoDebugUnitTest `
   :app:testVivoDebugUnitTest :app:testSamsungDebugUnitTest :app:testHonorDebugUnitTest `
-  :app:lintRelease :app:assembleRelease --no-daemon
+  :app:lintXiaomiRelease :app:lintOppoRelease :app:lintVivoRelease `
+  :app:lintSamsungRelease :app:lintHonorRelease :app:assembleRelease --no-daemon
 ```
+
+With flavors, AGP generates `lint<Brand>Release` only — there is no aggregate
+`lintRelease`, and naming it fails at task selection before any task runs. Add the new
+`lint<Brand>Release` here and in CI whenever a flavor is added.
 
 CI runs the same set and verifies the APKs. A passing JVM test only proves the checked
 condition; it does not prove Bluetooth behavior, Wi-Fi handoff, first frame, or head-unit

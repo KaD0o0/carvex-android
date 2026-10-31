@@ -151,8 +151,13 @@ Wrapper。`compileSdk`/`targetSdk` 为 37，`minSdk` 为 29。
 ```powershell
 .\gradlew.bat :app:testXiaomiDebugUnitTest :app:testOppoDebugUnitTest `
   :app:testVivoDebugUnitTest :app:testSamsungDebugUnitTest :app:testHonorDebugUnitTest `
-  :app:lintRelease :app:assembleRelease --no-daemon
+  :app:lintXiaomiRelease :app:lintOppoRelease :app:lintVivoRelease `
+  :app:lintSamsungRelease :app:lintHonorRelease :app:assembleRelease --no-daemon
 ```
+
+`:app` 有 flavor 之后，AGP 只生成 `lint<Brand>Release`，没有聚合的 `lintRelease`；
+写 `lintRelease` 会在任务选择阶段报 ambiguous，什么都没跑就失败。新增 flavor 时，
+这份清单和 CI 都要同步加上对应的 `lint<Brand>Release`。
 
 CI 运行同一组检查并校验 APK。JVM 测试通过只证明被检查的条件，不证明蓝牙行为、
 Wi-Fi handoff、首帧或车机互通。
