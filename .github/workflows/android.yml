@@ -11,7 +11,8 @@ concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  build:
+  # 纯 JVM 的协议与宿主测试：与品牌无关，单独一个 job，和下面的矩阵并行跑。
+  protocol-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -54,15 +55,8 @@ jobs:
           # artifacts/ 被 .gitignore 忽略，新检出的工作区里不存在；后续 tee 与 upload 都依赖它。
           mkdir -p artifacts
           echo "Using tracked signing material from .signing/"
-
-      - name: Gradle preflight
-        run: |
-          set -euo pipefail
-          chmod +x gradlew
-          java -version
-          ./gradlew --version
-
-      - name: Unit tests, Android Lint, signed APK
+      - name: Protocol and host tests
+        shell: bash
         run: |
           # runner 以 bash -e 启动，必须显式 +e：否则流水线一失败脚本就退出，
           # 后面的 PIPESTATUS 判定与失败注释都执行不到。
@@ -70,20 +64,10 @@ jobs:
           set -uo pipefail
           chmod +x gradlew
           mkdir -p artifacts
-          # 模块拆分后，测试随被测代码分布在多个模块，必须逐个点名才会执行
-          # （Gradle 不会自动跑依赖模块的测试：:app 只以 implementation 依赖它们，
-          #  不会把 test 任务传递上去）。
-          # lint 同理：:app 有五个 flavor，AGP 只生成 lint<Brand>Release，没有聚合的
-          # lintRelease——写 lintRelease 会在任务选择阶段直接报 ambiguous。
           ./gradlew :protocol-carplay:testDebugUnitTest :pcm-core:test :host-api:test \
             :bridge:testDebugUnitTest :host-carlife-mixing:testDebugUnitTest \
-            :app:testXiaomiDebugUnitTest :app:testOppoDebugUnitTest :app:testVivoDebugUnitTest \
-            :app:testSamsungDebugUnitTest :app:testHonorDebugUnitTest \
-            :app:lintXiaomiRelease :app:lintOppoRelease :app:lintVivoRelease \
-            :app:lintSamsungRelease :app:lintHonorRelease \
-            :app:assembleRelease \
             --build-cache --parallel --configuration-cache --stacktrace --console=plain 2>&1 | tee artifacts/build.log
-          # PIPESTATUS[0] 是 Gradle，[1] 是 tee。tee 失败（例如目录不存在）也要单独暴露出来。
+          # PIPESTATUS[0] 是 Gradle，[1] 是 tee。tee 失败也要单独暴露出来。
           gradle_status="${PIPESTATUS[0]}"
           tee_status="${PIPESTATUS[1]:-0}"
           status="$gradle_status"
@@ -94,7 +78,7 @@ jobs:
             excerpt="$(grep -n -E 'FAILURE:|What went wrong|^e: |error:|Lint found [0-9]+ error' -A 20 artifacts/build.log 2>/dev/null | tail -n 60)"
             [[ -n "$excerpt" ]] || excerpt="$(tail -n 60 artifacts/build.log 2>/dev/null)"
             {
-              echo '### Gradle failed'
+              echo '### Protocol tests failed'
               echo ''
               echo "\`gradle=${gradle_status} tee=${tee_status}\`"
               echo ''
@@ -102,74 +86,231 @@ jobs:
               printf '%s\n' "$excerpt"
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
-            # check-run 注释是匿名可读的，日志不是。把前几行错误压成一行发出去，
-            # 这样失败原因不依赖人工下载 artifacts。
+            # check-run 注释匿名可读，日志不是。把前几行错误压成一行发出去。
             msg="$(printf '%s\n' "$excerpt" | grep -v '^[[:space:]]*$' | head -n 8 \
               | tr '\n' ' ' | tr -s ' ' | cut -c1-900 | sed 's/%/%25/g')"
-            echo "::error title=Gradle failed (gradle=${gradle_status}, tee=${tee_status})::${msg}"
+            echo "::error title=Protocol tests failed (gradle=${gradle_status}, tee=${tee_status})::${msg}"
           fi
           exit "$status"
-      - name: Verify APK and write metadata
-        run: |
-          set -euo pipefail
-          : > artifacts/apk-signature.txt
-          for BRAND in xiaomi oppo vivo samsung honor; do
-            APKS=(app/build/outputs/apk/"${BRAND}"/release/CarVex_"${BRAND}"_release_*.apk)
-            [[ ${#APKS[@]} -eq 1 && -f "${APKS[0]}" ]]
-            APK="artifacts/$(basename "${APKS[0]}")"
-            cp "${APKS[0]}" "$APK"
-            "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK" >> artifacts/apk-signature.txt
-          done
-          (cd artifacts && sha256sum *.apk > SHA256SUMS)
-          # Read the version back out of the APK: the build derives it from the checkout, so this
-          # is the one value that cannot disagree with what actually shipped.
-          BADGING=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging artifacts/CarVex_xiaomi_release_*.apk)
-          VERSION_CODE=$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
-          VERSION_NAME=$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")
-          printf 'Commit: %s\nBuild: %s\nVersion code: %s\nVersion name: %s\nRun: %s\n' \
-            "$COMMIT_SHA" "$BUILD_NUMBER" "$VERSION_CODE" "$VERSION_NAME" \
-            "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" > artifacts/build-info.txt
-          printf '### Signed experimental APK\n\n- Commit: %s\n- Build: %s\n- Version code: %s (%s)\n- Video, touch and compatibility require vehicle acceptance.\n- Vehicle audio and microphone are source-integrated and await in-vehicle acceptance.\n' \
-            "$COMMIT_SHA" "$BUILD_NUMBER" "$VERSION_CODE" "$VERSION_NAME" >> "$GITHUB_STEP_SUMMARY"
-      - name: Save build result and log location
-        if: always()
-        env:
-          RESULT: ${{ job.status }}
-        run: |
-          mkdir -p artifacts
-          printf 'Result: %s\nCommit: %s\nBuild: %s\nFull logs: https://github.com/%s/actions/runs/%s\n' \
-            "$RESULT" "$COMMIT_SHA" "$BUILD_NUMBER" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" > artifacts/build-status.txt
       - name: Reports and failure logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: reports-${{ github.run_number }}
+          name: reports-${{ github.run_number }}-protocol
           path: |
             artifacts/build.log
-            artifacts/build-status.txt
             **/build/reports/**
             **/build/test-results/**
           if-no-files-found: warn
           retention-days: 30
-      - name: APK download
+
+  # 一个 flavor 一个 job：各自拿到独立的 runner 和 4 个核，五个品牌真并行。
+  # 单 job 里也能并行（--parallel，且开启 configuration cache 后同一 subproject 内的
+  # 任务也会并行），但并行度受这台 runner 的核数限制，五个 flavor 的 lint 与 R8 打包
+  # 仍然要排队；拆成独立 job 才拿得到额外的核。
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    name: apk (${{ matrix.brand }})
+    strategy:
+      # 一个品牌失败不取消其它品牌，便于一次看全所有问题。
+      fail-fast: false
+      matrix:
+        include:
+          - brand: xiaomi
+            Brand: Xiaomi
+          - brand: oppo
+            Brand: Oppo
+          - brand: vivo
+            Brand: Vivo
+          - brand: samsung
+            Brand: Samsung
+          - brand: honor
+            Brand: Honor
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Cache required Android SDK packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/local/lib/android/sdk/platforms/android-37.0
+            /usr/local/lib/android/sdk/build-tools/36.0.0
+          key: android-sdk-${{ runner.os }}-${{ runner.arch }}-api37.0-tools36.0.0-v1
+      - name: Ensure required Android SDK packages
+        run: |
+          set -euo pipefail
+          if [[ ! -f "$ANDROID_HOME/platforms/android-37.0/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]]; then
+            sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+          fi
+      - name: Verify published signing material
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .signing/keystore.properties
+          test -s .signing/release.jks
+          mkdir -p artifacts
+          echo "Using tracked signing material from .signing/"
+      - name: Unit tests, lint and signed APK (${{ matrix.brand }})
+        shell: bash
+        run: |
+          set +e
+          set -uo pipefail
+          chmod +x gradlew
+          mkdir -p artifacts
+          # lint 必须点名到 flavor：:app 有五个 flavor，AGP 只生成 lint<Brand>Release，
+          # 没有聚合的 lintRelease——写 lintRelease 会在任务选择阶段报 ambiguous，
+          # 什么都不跑就失败。
+          ./gradlew ":app:test${{ matrix.Brand }}DebugUnitTest" \
+            ":app:lint${{ matrix.Brand }}Release" \
+            ":app:assemble${{ matrix.Brand }}Release" \
+            --build-cache --parallel --configuration-cache --stacktrace --console=plain 2>&1 | tee artifacts/build.log
+          gradle_status="${PIPESTATUS[0]}"
+          tee_status="${PIPESTATUS[1]:-0}"
+          status="$gradle_status"
+          if [[ "$gradle_status" -eq 0 && "$tee_status" -ne 0 ]]; then
+            status="$tee_status"
+          fi
+          if [[ "$status" -ne 0 ]]; then
+            excerpt="$(grep -n -E 'FAILURE:|What went wrong|^e: |error:|Lint found [0-9]+ error' -A 20 artifacts/build.log 2>/dev/null | tail -n 60)"
+            [[ -n "$excerpt" ]] || excerpt="$(tail -n 60 artifacts/build.log 2>/dev/null)"
+            {
+              echo "### ${{ matrix.brand }} failed"
+              echo ''
+              echo "\`gradle=${gradle_status} tee=${tee_status}\`"
+              echo ''
+              echo '```text'
+              printf '%s\n' "$excerpt"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            msg="$(printf '%s\n' "$excerpt" | grep -v '^[[:space:]]*$' | head -n 8 \
+              | tr '\n' ' ' | tr -s ' ' | cut -c1-900 | sed 's/%/%25/g')"
+            echo "::error title=${{ matrix.brand }} failed (gradle=${gradle_status}, tee=${tee_status})::${msg}"
+          fi
+          exit "$status"
+      - name: Verify APK and write metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          APKS=(app/build/outputs/apk/${{ matrix.brand }}/release/CarVex_${{ matrix.brand }}_release_*.apk)
+          [[ ${#APKS[@]} -eq 1 ]]
+          APK="${APKS[0]}"
+          cp "$APK" artifacts/
+          APK_NAME="$(basename "$APK")"
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            "artifacts/$APK_NAME" > "artifacts/signature-${{ matrix.brand }}.txt"
+          # 版本号从 APK 里读回来：构建由 checkout 派生版本，这是唯一不可能与实际产物不一致的值。
+          BADGING=$("$ANDROID_HOME/build-tools/36.0.0/aapt" dump badging "$APK")
+          VERSION_CODE=$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionCode='\([0-9]*\)'.*/\1/p")
+          VERSION_NAME=$(printf '%s\n' "$BADGING" | sed -n "s/^package:.*versionName='\([^']*\)'.*/\1/p")
+          printf 'Brand: %s\nAPK: %s\nCommit: %s\nVersion code: %s\nVersion name: %s\nRun: %s\n' \
+            "${{ matrix.brand }}" "$APK_NAME" "$COMMIT_SHA" "$VERSION_CODE" "$VERSION_NAME" \
+            "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            > "artifacts/build-info-${{ matrix.brand }}.txt"
+          printf '### %s\n\n- APK: `%s`\n- Version code: %s (%s)\n- Video, touch and compatibility require vehicle acceptance.\n- Vehicle audio and microphone are source-integrated and await in-vehicle acceptance.\n' \
+            "${{ matrix.brand }}" "$APK_NAME" "$VERSION_CODE" "$VERSION_NAME" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ github.run_number }}
+          name: apk-${{ matrix.brand }}
           path: |
             artifacts/*.apk
-            artifacts/SHA256SUMS
-            artifacts/build-info.txt
-            artifacts/apk-signature.txt
+            artifacts/build-info-${{ matrix.brand }}.txt
+            artifacts/signature-${{ matrix.brand }}.txt
           retention-days: 90
-      # 只在 push 到 main / 手动触发时发布：PR（尤其来自 fork 的 PR）拿不到 contents: write，
-      # 无条件 create release 会让每个 PR 都红。PR 仍然会跑测试、lint 与打包，只是不发版。
+      - name: Reports and failure logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: reports-${{ github.run_number }}-${{ matrix.brand }}
+          path: |
+            artifacts/build.log
+            **/build/reports/**
+            **/build/test-results/**
+          if-no-files-found: warn
+          retention-days: 30
+
+  # 汇总：把五个 job 的 APK 合到一处，按 flavor 打 zip、算校验和、拼元数据、发预发布版本。
+  publish:
+    needs: [protocol-tests, apk]
+    # 只在 push 到 main / 手动触发时发布：PR（尤其来自 fork 的 PR）拿不到 contents: write，
+    # 无条件创建 release 会让每个 PR 都红。PR 仍然会跑测试、lint 与打包，只是不发版。
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      BUILD_NUMBER: ${{ github.run_number }}
+      COMMIT_SHA: ${{ github.sha }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: apk-*
+          merge-multiple: true
+          path: artifacts
+      - name: Bundle, checksums and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          cd artifacts
+          APKS=(*.apk)
+          if [[ ${#APKS[@]} -ne 5 ]]; then
+            echo "应有 5 个品牌的 APK，实际 ${#APKS[@]} 个：${APKS[*]:-<none>}" >&2
+            exit 1
+          fi
+          cat build-info-*.txt > build-info.txt
+          # 版本号从 APK 文件名派生（CarVex_xiaomi_release_20003.apk -> 20003），
+          # 与散装 APK 用同一套命名：CarVex_all_flavors_release_<version>.zip。
+          VERSION="$(basename "${APKS[0]}" .apk)"
+          VERSION="${VERSION##*_}"
+          BUNDLE="CarVex_all_flavors_release_${VERSION}.zip"
+          zip -q "$BUNDLE" "${APKS[@]}" build-info.txt
+          sha256sum *.apk "$BUNDLE" > SHA256SUMS
+          {
+            echo '### Signed experimental APK'
+            echo ''
+            cat build-info.txt
+            echo ''
+            echo "五个品牌的 APK 同时打包在 \`${BUNDLE}\` 中。"
+          } >> "$GITHUB_STEP_SUMMARY"
+          ls -lh
       - name: Publish downloadable experimental build
-        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          gh release create "build-${BUILD_NUMBER}" artifacts/*.apk artifacts/SHA256SUMS artifacts/build-info.txt \
-            --target "$COMMIT_SHA" --title "Experimental build ${BUILD_NUMBER}" --prerelease \
-            --notes "Signed build from ${COMMIT_SHA}. Android 10+. Protocol/UI build for vehicle validation. Vehicle audio and microphone transfer are not implemented. Follow README and docs/ACCEPTANCE.zh-CN.md."
-
-
+          set -euo pipefail
+          TAG="build-${BUILD_NUMBER}"
+          mapfile -t ASSETS < <(ls artifacts/*.apk artifacts/*.zip artifacts/SHA256SUMS artifacts/build-info.txt)
+          # 重跑同一 run 时 tag 已存在：create 会失败，改成覆盖上传，rerun 才不会卡在这里。
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          else
+            gh release create "$TAG" "${ASSETS[@]}" \
+              --target "$COMMIT_SHA" --title "Experimental build ${BUILD_NUMBER}" --prerelease \
+              --notes "Signed build from ${COMMIT_SHA}. Android 10+. Protocol/UI build for vehicle validation. Vehicle audio and microphone transfer are not implemented. Follow README and docs/ACCEPTANCE.zh-CN.md."
+          fi
+      - name: Upload build outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ github.run_number }}
+          path: |
+            artifacts/*.apk
+            artifacts/*.zip
+            artifacts/SHA256SUMS
+            artifacts/build-info.txt
+          retention-days: 90

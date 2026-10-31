@@ -166,9 +166,10 @@ With flavors, AGP generates `lint<Brand>Release` only — there is no aggregate
 `lintRelease`, and naming it fails at task selection before any task runs. Add the new
 `lint<Brand>Release` here and in CI whenever a flavor is added.
 
-CI runs the same set and verifies the APKs. A passing JVM test only proves the checked
-condition; it does not prove Bluetooth behavior, Wi-Fi handoff, first frame, or head-unit
-interoperability.
+CI runs the same set and verifies the APKs. Each flavor is a separate parallel job, so a
+new flavor also needs a new row in the workflow matrix or that brand is never validated.
+A passing JVM test only proves the checked condition; it does not prove Bluetooth
+behavior, Wi-Fi handoff, first frame, or head-unit interoperability.
 
 ## 7. Protocol implementation limits
 

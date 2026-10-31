@@ -147,18 +147,25 @@ Release 构建开启 R8 与资源压缩。Lint 配置为 `abortOnError = true`�
 
 ## CI 与签名
 
-`.github/workflows/android.yml` 在推送 `main`、Pull Request 和手动触发时运行。它会执行
-`:protocol-carplay`、`:pcm-core`、`:host-api`、`:bridge`、`:host-carlife-mixing` 以及
-五个 app flavor 的测试，然后运行五个 flavor 各自的 lint（`:app:lintXiaomiRelease`
-等；`:app` 有 flavor 后没有聚合的 `lintRelease`）、`:app:assembleRelease`，并校验
-产出的 APK。
+`.github/workflows/android.yml` 在推送 `main`、Pull Request 和手动触发时运行，分三部分：
+
+- `protocol-tests`：`:protocol-carplay`、`:pcm-core`、`:host-api`、`:bridge`、
+  `:host-carlife-mixing` 的纯 JVM 测试。
+- `apk`：按 flavor 展开的矩阵，每个品牌一个 job 并行执行自己的单测、lint 和打包
+  （`:app:test<Brand>DebugUnitTest`、`:app:lint<Brand>Release`、
+  `:app:assemble<Brand>Release`）。lint 必须点名到 flavor：`:app` 有 flavor 后 AGP
+  只生成 `lint<Brand>Release`，没有聚合的 `lintRelease`。`fail-fast: false`，
+  一个品牌失败不会取消其它品牌。
+- `publish`：收集五个 job 的 APK，打包成 `CarVex_all_flavors_release_<version>.zip`
+  （版本从 APK 文件名派生，与散装包同源），生成 `SHA256SUMS` 与 `build-info.txt`，
+  非 PR 运行再发预发布版本。
 
 CI 直接使用仓库内公开的 `.signing/keystore.properties` 与 `.signing/release.jks`，
 不再依赖 secrets；fork PR 也使用同一份公开签名材料。
 
-每次非 PR 运行都会把已签名 APK 与 `SHA256SUMS` 作为 `build-<run>` 预发布版本上传到
-GitHub Releases。这些是实验构建：车载音频与麦克风传输尚未实现，视频、触摸与兼容性
-仍需实车验收。
+每次非 PR 运行都会把散装 APK、`CarVex_all_flavors_release_<version>.zip` 与
+`SHA256SUMS` 作为 `build-<run>` 预发布版本上传到 GitHub Releases。这些是实验构建：
+车载音频与麦克风传输尚未实现，视频、触摸与兼容性仍需实车验收。
 
 本仓库有意公开 `.signing/keystore.properties` 与 `release.jks`，用于可复现构建；
 它们不是安全边界。仍不要提交 `local.properties`、设备私有日志或真实用户数据。
