@@ -38,6 +38,8 @@ If this project has helped you, you are welcome to donate as a thank-you. Donati
 
 CarVeX is the Android implementation of multi-protocol vehicle connectivity, currently CarPlay-first. The goal is not CarPlay-only: HiCar, CarLife and ICCOA plug into the same session, platform and host framework. The CarPlay chain implemented so far matches the research docsets:
 
+Protocol research, connection analysis and firmware evidence live in the separate repository: [`iamr0s/carvex-carplay-research`](https://github.com/iamr0s/carvex-carplay-research).
+
 ```text
 Bluetooth RFCOMM
   -> iAP2 link

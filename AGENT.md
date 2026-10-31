@@ -4,6 +4,8 @@
 
 本文件只适用于本仓库：**CarVeX**，多协议车机互联的 Android 实现，当前以 CarPlay 为主，包含协议栈、会话编排和品牌宿主适配。如果本仓库位于更大的研究工作区并存在 [`../AGENT.md`](../AGENT.md)，该工作区规则同样适用，并且仍是固件证据与研究流程的依据。
 
+协议研究、连接分析和固件证据位于：[`iamr0s/carvex-carplay-research`](https://github.com/iamr0s/carvex-carplay-research)。
+
 ## 1. 适用范围与优先级
 
 阅读顺序：

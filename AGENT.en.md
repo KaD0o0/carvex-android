@@ -4,6 +4,8 @@
 
 Rules for this repository only: **CarVeX**, the Android implementation of multi-protocol vehicle connectivity, currently CarPlay-first, including the protocol stack, session orchestration and vendor host adapters. If this repository sits inside the larger research workspace and [`../AGENT.en.md`](../AGENT.en.md) exists, that workspace file also applies and remains the authority for firmware evidence and research process.
 
+Protocol research, connection analysis and firmware evidence live in: [`iamr0s/carvex-carplay-research`](https://github.com/iamr0s/carvex-carplay-research).
+
 ## 1. Scope and precedence
 
 Read in this order:

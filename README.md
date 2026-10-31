@@ -35,6 +35,8 @@
 
 CarVeX 是多协议车机互联的 Android 实现，当前以 CarPlay 为主。项目目标不是只适配 CarPlay，而是在同一套会话、平台和宿主框架下接入 HiCar、CarLife、ICCOA 等协议。当前已展开的 CarPlay 链路与 docset 中记录的一致：
 
+协议研究、连接分析和固件证据位于独立仓库：[`iamr0s/carvex-carplay-research`](https://github.com/iamr0s/carvex-carplay-research)。
+
 ```text
 Bluetooth RFCOMM
   -> iAP2 link
