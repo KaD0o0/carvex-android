@@ -51,12 +51,17 @@ jobs:
           set -euo pipefail
           test -s .signing/keystore.properties
           test -s .signing/release.jks
+          # artifacts/ 被 .gitignore 忽略，新检出的工作区里不存在；后续 tee 与 upload 都依赖它。
+          mkdir -p artifacts
           echo "Using tracked signing material from .signing/"
 
       - name: Unit tests, Android Lint, signed APK
         run: |
-          set -euo pipefail
+          # 不启用 -e：这里要靠 PIPESTATUS 区分 Gradle 与 tee 的退出码，并把失败原因写进
+          # Step Summary；否则 Actions 页面只会显示 "exit code 1"，看不到具体是哪个任务失败。
+          set -uo pipefail
           chmod +x gradlew
+          mkdir -p artifacts
           # 模块拆分后，测试随被测代码分布在多个模块，必须逐个点名才会执行
           # （Gradle 不会自动跑依赖模块的测试：:app 只以 implementation 依赖它们，
           #  不会把 test 任务传递上去）。
@@ -66,6 +71,17 @@ jobs:
             :app:testSamsungDebugUnitTest :app:testHonorDebugUnitTest \
             :app:lintRelease :app:assembleRelease \
             --build-cache --parallel --configuration-cache --stacktrace --console=plain 2>&1 | tee artifacts/build.log
+          status="${PIPESTATUS[0]}"
+          if [[ "$status" -ne 0 ]]; then
+            {
+              echo '### Gradle failed'
+              echo ''
+              echo '```text'
+              grep -n -E 'FAILURE:|What went wrong|^e: |Lint found [0-9]+ error|^\* What went wrong' -A 25 artifacts/build.log | tail -n 150 || tail -n 150 artifacts/build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$status"
       - name: Verify APK and write metadata
         run: |
           set -euo pipefail
