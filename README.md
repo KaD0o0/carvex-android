@@ -152,10 +152,8 @@ Release 构建开启 R8 与资源压缩。Lint 配置为 `abortOnError = true`�
 五个 app flavor 的测试，然后运行 `:app:lintRelease`、`:app:assembleRelease`，并校验
 产出的 APK。
 
-Release 签名需要以下仓库 secrets：`ANDROID_KEYSTORE_BASE64`、
-`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_ALIAS`、`ANDROID_KEY_PASSWORD`。fork 发来的
-PR 读不到这些值，因此 PR 任务只生成一次性密钥库让配置阶段通过；用该密钥签出的包不会
-被发布。
+CI 直接使用仓库内公开的 `.signing/keystore.properties` 与 `.signing/release.jks`，
+不再依赖 secrets；fork PR 也使用同一份公开签名材料。
 
 每次非 PR 运行都会把已签名 APK 与 `SHA256SUMS` 作为 `build-<run>` 预发布版本上传到
 GitHub Releases。这些是实验构建：车载音频与麦克风传输尚未实现，视频、触摸与兼容性

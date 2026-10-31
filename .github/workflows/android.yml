@@ -17,10 +17,6 @@ jobs:
     env:
       BUILD_NUMBER: ${{ github.run_number }}
       COMMIT_SHA: ${{ github.sha }}
-      KEYSTORE_PATH: ${{ github.workspace }}/.signing/release.jks
-      KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,54 +44,15 @@ jobs:
           if [[ ! -f "$ANDROID_HOME/platforms/android-37.0/android.jar" || ! -x "$ANDROID_HOME/build-tools/36.0.0/apksigner" ]]; then
             sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
           fi
-      # 签名材料只在能拿到 secret 的场合准备（push 到 main / 手动触发）。
-      # fork 发来的 PR 拿不到 ANDROID_KEYSTORE_BASE64，这一跳若硬失败会让每个外部 PR 都红，
-      # 而 PR 真正需要的是"测试与 lint 跑起来"，不是"出一个已签名的包"。
-      - name: Validate fixed signing identity
-        if: github.event_name != 'pull_request'
-        env:
-          STORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      # 签名材料随仓库公开，CI 与本地构建共用 .signing/ 下的同一份配置，不再依赖 secrets。
+      - name: Verify published signing material
         shell: bash
         run: |
           set -euo pipefail
-          for item in STORE_B64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            if [[ -z "${!item:-}" ]]; then
-              echo "::error::Missing signing secret: $item"
-              exit 1
-            fi
-          done
-          mkdir -p .signing artifacts
-          printf '%s' "$STORE_B64" | base64 --decode > "$KEYSTORE_PATH"
-          # Gradle derives the runtime fingerprint from this keystore, so only confirm the alias exists.
-          keytool -list -keystore "$KEYSTORE_PATH" -storepass:env KEYSTORE_PASSWORD -alias "$KEY_ALIAS" > /dev/null
-          # Packaging reads .signing/keystore.properties, not environment variables, so the CI path
-          # and an Android Studio build share exactly one signing configuration.
-          {
-            echo "storeFile=$KEYSTORE_PATH"
-            echo "storePassword=$KEYSTORE_PASSWORD"
-            echo "keyAlias=$KEY_ALIAS"
-            echo "keyPassword=$KEY_PASSWORD"
-          } > .signing/keystore.properties
-          chmod 600 .signing/keystore.properties
-      # PR 不签名：generateReleaseBuildConfig 需要 SIGNING_FP，因此只准备一份临时 debug 密钥库，
-      # 让配置阶段能通过；它签出来的包不被任何东西信任，也不会被发布。
-      - name: Prepare throwaway keystore for pull requests
-        if: github.event_name == 'pull_request'
-        shell: bash
-        working-directory: ${{ github.workspace }}
-        run: |
-          set -euo pipefail
-          mkdir -p .signing artifacts
-          keytool -genkeypair -keystore .signing/release.jks -storetype JKS \
-            -storepass pullrequest -keypass pullrequest -alias pr -keyalg RSA -keysize 2048 \
-            -validity 1 -dname "CN=PR verification only" > /dev/null 2>&1
-          {
-            echo "storeFile=.signing/release.jks"
-            echo "storePassword=pullrequest"
-            echo "keyAlias=pr"
-            echo "keyPassword=pullrequest"
-          } > .signing/keystore.properties
-          chmod 600 .signing/keystore.properties
+          test -s .signing/keystore.properties
+          test -s .signing/release.jks
+          echo "Using tracked signing material from .signing/"
+
       - name: Unit tests, Android Lint, signed APK
         run: |
           set -euo pipefail
@@ -171,8 +128,5 @@ jobs:
           gh release create "build-${BUILD_NUMBER}" artifacts/*.apk artifacts/SHA256SUMS artifacts/build-info.txt \
             --target "$COMMIT_SHA" --title "Experimental build ${BUILD_NUMBER}" --prerelease \
             --notes "Signed build from ${COMMIT_SHA}. Android 10+. Protocol/UI build for vehicle validation. Vehicle audio and microphone transfer are not implemented. Follow README and docs/ACCEPTANCE.zh-CN.md."
-      - name: Remove temporary signing material
-        if: always()
-        run: rm -f .signing/release.jks .signing/keystore.properties
 
 

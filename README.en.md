@@ -168,10 +168,9 @@ and manually. It runs tests for `:protocol-carplay`, `:pcm-core`, `:host-api`, `
 `:host-carlife-mixing` and all five app flavors, then `:app:lintRelease`,
 `:app:assembleRelease`, and verifies the produced APKs.
 
-Release signing needs these repository secrets: `ANDROID_KEYSTORE_BASE64`,
-`ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and `ANDROID_KEY_PASSWORD`. Pull requests
-from forks cannot read them, so the PR job generates a throwaway keystore only to let the
-build configure. Nothing signed by that throwaway key is published.
+CI uses the public `.signing/keystore.properties` and `.signing/release.jks` tracked in
+this repository; it no longer depends on repository secrets. Fork PRs use the same public
+signing material.
 
 Every non-PR run publishes the signed APKs and `SHA256SUMS` as a prerelease named
 `build-<run>` under GitHub Releases. These are experimental builds: audio and microphone
