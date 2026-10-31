@@ -118,15 +118,10 @@ jobs:
       matrix:
         include:
           - brand: xiaomi
-            Brand: Xiaomi
           - brand: oppo
-            Brand: Oppo
           - brand: vivo
-            Brand: Vivo
           - brand: samsung
-            Brand: Samsung
           - brand: honor
-            Brand: Honor
     env:
       BUILD_NUMBER: ${{ github.run_number }}
       COMMIT_SHA: ${{ github.sha }}
@@ -174,9 +169,13 @@ jobs:
           # lint 必须点名到 flavor：:app 有五个 flavor，AGP 只生成 lint<Brand>Release，
           # 没有聚合的 lintRelease——写 lintRelease 会在任务选择阶段报 ambiguous，
           # 什么都不跑就失败。
-          ./gradlew ":app:test${{ matrix.Brand }}DebugUnitTest" \
-            ":app:lint${{ matrix.Brand }}Release" \
-            ":app:assemble${{ matrix.Brand }}Release" \
+          # GitHub matrix 的键大小写不敏感，不能再放一个 Brand 键（会报 already defined）；
+          # 品牌名首字母大写在这里现推：xiaomi -> Xiaomi。
+          BRAND="${{ matrix.brand }}"
+          BRAND_CAP="$(tr '[:lower:]' '[:upper:]' <<< "${BRAND:0:1}")${BRAND:1}"
+          ./gradlew ":app:test${BRAND_CAP}DebugUnitTest" \
+            ":app:lint${BRAND_CAP}Release" \
+            ":app:assemble${BRAND_CAP}Release" \
             --build-cache --parallel --configuration-cache --stacktrace --console=plain 2>&1 | tee artifacts/build.log
           gradle_status="${PIPESTATUS[0]}"
           tee_status="${PIPESTATUS[1]:-0}"
