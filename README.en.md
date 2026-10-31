@@ -34,6 +34,17 @@ If this project has helped you, you are welcome to donate as a thank-you. Donati
 
 <p align="center">Alipay · WeChat Pay · Binance Pay</p>
 
+## Community
+
+The CarVeX developer group on QQ, for protocol work, head-unit compatibility and field
+debugging.
+
+<p align="center">
+  <a href="https://qm.qq.com/cgi-bin/qm/qr?k=KyWBLDmahaZW2TKDU51x3hs-6irSn6UX&amp;jump_from=webapi&amp;authKey=qFX04xLs8pXluNhr7O18mECpkt8MP3ooZzKf81NPWjq9C4QDf42TixqzTWrEXQG1">
+    <img src="https://pub.idqqimg.com/wpa/images/group.png" alt="CarVeX developer group (QQ)">
+  </a>
+</p>
+
 ## What this is
 
 CarVeX is the Android implementation of multi-protocol vehicle connectivity, currently CarPlay-first. The goal is not CarPlay-only: HiCar, CarLife and ICCOA plug into the same session, platform and host framework. The CarPlay chain implemented so far matches the research docsets:
