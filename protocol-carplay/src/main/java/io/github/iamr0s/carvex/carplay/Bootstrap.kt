@@ -110,6 +110,11 @@ object Bootstrap {
     private const val HANDSHAKE_DEADLINE_MS=90_000L
     /** After the Wi-Fi configuration arrives, how long a still-missing 0x5703 announcement is awaited. */
     private const val ANNOUNCEMENT_WAIT_MS=30_000L
+    /** A fresh SYN invalidates all Identification/AA state. Re-run the bootstrap a small number of
+     * times on the new link generation instead of continuing with stale credentials. */
+    private const val MAX_BOOTSTRAP_LINK_RESTARTS=2
+    private class BootstrapLinkRestart(cause:Throwable?=null):IllegalStateException(
+        "iAP link changed during bootstrap",cause)
     @SuppressLint("MissingPermission")
     fun devices(context:Context):List<Device> {
         val adapter=context.getSystemService(BluetoothManager::class.java).adapter?:return emptyList()
@@ -288,6 +293,44 @@ object Bootstrap {
                   onWifiAnnouncement:WifiAnnouncementHandler?=null,
                   identificationWaitMs:Long=10_000L,
                   networkHandoff:IapNetworkHandoff?=null):ControlResult {
+        val deadline=System.nanoTime()+HANDSHAKE_DEADLINE_MS*1_000_000
+        var restarts=0
+        while(true){
+            val attemptGeneration=link.generation
+            val attemptEpoch=link.linkEpoch
+            try{
+                return negotiateSessionOnce(link,phoneMac,deviceName,identity,previous,
+                    experimentalIntegrityOnly,runtimeSession,log,handoffWaitMs,onNowPlayingCommand,
+                    onDigitalKeyRequest,onDeviceWifiInfoRequest,onCarPlayStartRequest,onWifiAnnouncement,
+                    identificationWaitMs,networkHandoff,deadline)
+            }catch(t:Throwable){
+                val changed=link.generation!=attemptGeneration||link.linkEpoch!=attemptEpoch
+                if(!changed)throw t
+                if(restarts>=MAX_BOOTSTRAP_LINK_RESTARTS||System.nanoTime()>=deadline)throw BootstrapLinkRestart(t)
+                // IapLink performs same-socket resynchronization before exposing the changed
+                // generation to its reader. If no control session is ready here, the peer only
+                // invalidated the old attempt; do not block Bootstrap waiting for an unbounded
+                // future SYN or let an old rejection write into the next epoch.
+                if(link.negotiatedControlSession==null)throw BootstrapLinkRestart(t)
+                restarts++
+                networkHandoff?.rebind(link.generation,link.linkEpoch)
+                log("iAP bootstrap restart #"+restarts+" oldGeneration="+attemptGeneration+
+                    " oldEpoch="+attemptEpoch+" newGeneration="+link.generation+
+                    " newEpoch="+link.linkEpoch+" next=AUTH-IDENTIFICATION")
+            }
+        }
+    }
+
+    private fun negotiateSessionOnce(link:IapLink,phoneMac:String,deviceName:String,identity:PairIdentity,previous:WifiBootstrap?=null,
+                  experimentalIntegrityOnly:Boolean,runtimeSession:Boolean,log:(String)->Unit,handoffWaitMs:Long=30_000L,
+                  onNowPlayingCommand:((Int,IapFields)->Boolean)?=null,
+                  onDigitalKeyRequest:DigitalKeyMatcher?=null,
+                  onDeviceWifiInfoRequest:DeviceWifiInfoProvider?=null,
+                  onCarPlayStartRequest:CarPlayStartRequest?=null,
+                  onWifiAnnouncement:WifiAnnouncementHandler?=null,
+                  identificationWaitMs:Long=10_000L,
+                  networkHandoff:IapNetworkHandoff?=null,
+                  handshakeDeadlineNanos:Long=System.nanoTime()+HANDSHAKE_DEADLINE_MS*1_000_000):ControlResult {
         require(handoffWaitMs in 1..30_000L)
         // Existing local budget, not an inferred Apple timeout. Tests may only shorten it.
         require(identificationWaitMs in 1..10_000L)
@@ -297,7 +340,8 @@ object Bootstrap {
         val linkEpoch=link.linkEpoch
         val control=requireNotNull(link.negotiatedControlSession)
         fun checkGeneration(){
-            check(link.generation==generation&&link.linkEpoch==linkEpoch&&link.negotiatedControlSession!=null){"iAP link changed during bootstrap"}
+            if(link.generation!=generation||link.linkEpoch!=linkEpoch||link.negotiatedControlSession==null)
+                throw BootstrapLinkRestart()
         }
         checkGeneration()
         val schema=requireNotNull(IapStartupPolicy.selectSchema(IapControlSessionKind.CARPLAY,control.version)){
@@ -307,7 +351,7 @@ object Bootstrap {
         val transactions=PeerNegotiationController(if(order==IapStartupPolicy.Order.AUTH_FIRST)
             FallbackAttempt.AUTH_FIRST else FallbackAttempt.IDENT_FIRST,
             control.id,control.version,IapControlSessionKind.CARPLAY)
-        val deadline=System.nanoTime()+HANDSHAKE_DEADLINE_MS*1_000_000
+        val deadline=handshakeDeadlineNanos
         var authDeadline=0L
         var identificationDeadline=0L
         var accessorySends:Set<Int> =emptySet()

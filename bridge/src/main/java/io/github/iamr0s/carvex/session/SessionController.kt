@@ -568,11 +568,9 @@ class SessionController(
             val link=r.own(IapLink(bt.inputStream,bt.outputStream,{BridgeStore.log(id,it)},{sourceFailure.get().invoke(it)}))
             phase(Stage.DETECT,25000){link.start(allowDirectSyn=true)}
             val identity=PairStore(context).identity()
-            val handoffGeneration=link.generation
-            val handoffEpoch=link.linkEpoch
-            val networkHandoff=r.own(IapNetworkHandoff(handoffGeneration,handoffEpoch,o.experiment,
+            val networkHandoff=r.own(IapNetworkHandoff(link.generation,link.linkEpoch,o.experiment,
                 {attemptJob.isActive&&!ended.get()&&!failed.isCompleted&&
-                    link.generation==handoffGeneration&&link.linkEpoch==handoffEpoch},
+                    link.negotiatedControlSession!=null},
                 {BridgeStore.log(id,it)}))
             // The selected control schema owns the transaction order. Authentication failure
             // never retries another order or reuses the same socket's security state.

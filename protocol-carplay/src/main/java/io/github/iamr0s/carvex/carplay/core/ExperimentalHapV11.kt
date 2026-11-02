@@ -6,12 +6,14 @@ object PairingIdentityBinding {
     /** 固件遇到 `/info` 的 deviceID 与 Bonjour deviceID 不一致时，**保留原值并继续**
      *  （日志 "Ignoring new ID … and using original"）。这里同样不中止，只置标志供调用方记录。 */
     @Volatile var lastDeviceIdConflict:Boolean=false
-    fun identifier(deviceId:String?,bonjourDeviceId:String?,pairingId:String?):ByteArray {
+    fun optionalIdentifier(deviceId:String?,bonjourDeviceId:String?,pairingId:String?):ByteArray? {
         lastDeviceIdConflict=deviceId!=null&&bonjourDeviceId!=null&&
             ReceiverIdentity.canonical(deviceId)!=ReceiverIdentity.canonical(bonjourDeviceId)
         return pairingId?.toByteArray(Charsets.UTF_8)?.takeIf{it.size in 1..1024}
-            ?:securityFailure(SecurityReason.PAIR_IDENTIFIER_MISSING)
     }
+    fun identifier(deviceId:String?,bonjourDeviceId:String?,pairingId:String?):ByteArray =
+        optionalIdentifier(deviceId,bonjourDeviceId,pairingId)
+            ?:securityFailure(SecurityReason.PAIR_IDENTIFIER_MISSING)
     fun requirePeer(identifier:ByteArray,advertised:ByteArray?,peer:PeerIdentity) {
         if(!identifier.contentEquals(peer.identifier)||
             (advertised!=null&&!MessageDigest.isEqual(advertised,peer.public)))
@@ -42,6 +44,8 @@ object ExperimentalHapV11 {
 class ExperimentalHapRecords(private val storage:PairRecordStorage) {
     private fun key(owner:PairIdentity,receiver:String,identifier:ByteArray)=
         "experiment-hap-v11-"+PairRecords(storage).key(owner,identifier,"hap-v11:"+receiver,1)
+    private fun fallbackKey(owner:PairIdentity,receiver:String)=
+        "experiment-hap-v11-receiver-"+PairRecords(storage).key(owner,receiver.toByteArray(Charsets.UTF_8),"hap-v11-receiver:"+receiver,1)
     private fun decode(raw:ByteArray):PeerIdentity = try {
         val p=Plist.dictionary(raw)
         val id=p["identifier"] as? ByteArray ?: (p["id"] as String).toByteArray(Charsets.UTF_8)
@@ -59,6 +63,19 @@ class ExperimentalHapRecords(private val storage:PairRecordStorage) {
             if(peer.identifier.contentEquals(id))return peer
         }
         return null
+    }
+    /** Experimental 4301-only fallback used when Bonjour has no pi. The record is keyed by
+     * the receiver alias but stores the real HAP identifier returned by Pair Setup; a later
+     * public-key/identifier mismatch is rejected instead of overwriting the record. */
+    fun loadFallback(owner:PairIdentity,receiver:String):PeerIdentity? =
+        storage.read(fallbackKey(owner,receiver))?.let(::decode)
+
+    @Synchronized fun saveFallback(owner:PairIdentity,receiver:String,peer:PeerIdentity){
+        loadFallback(owner,receiver)?.let{existing->
+            PairingIdentityBinding.requirePeer(existing.identifier,existing.public,peer)
+        }
+        storage.write(fallbackKey(owner,receiver),Plist.encode(mapOf(
+            "identifier" to peer.identifier,"public" to peer.public)))
     }
     @Synchronized fun saveVerified(owner:PairIdentity,receiver:String,pairingId:String,peer:PeerIdentity) {
         val id=pairingId.toByteArray(Charsets.UTF_8)

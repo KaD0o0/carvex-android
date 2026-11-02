@@ -144,6 +144,24 @@ class NetworkHandoffTest {
         assertThrows(IllegalStateException::class.java){f.handoff.commit(f.discovery())}
     }
 
+    @Test fun rebindClearsOldIdentityAndAcceptsOnlyTheNewLinkGeneration() {
+        val f=Fixture()
+        val oldIdentity=f.identity
+        f.handoff.rebind(8,10)
+        assertThrows(IllegalStateException::class.java){oldIdentity.requireCurrent(7,9)}
+        assertNull(f.handoff.configuration())
+        val newIdentity=AcceptedIdentification(8,10,IdentifyInfo(
+            accessorySends=listOf(MessageId(0x57,3),MessageId(0x43,1)),
+            networkHandoff=NetworkHandoffCapabilities(true,true)))
+        val newInitial=WifiBootstrap("synthetic","password1",2,null,
+            authentication=BootstrapAuthentication(8,10,2,false,true),identification=newIdentity)
+        f.handoff.acceptBootstrap(newInitial)
+        assertTrue(f.handoff.handle(IapCommand.Fields(0x4301,f.start()),8,10))
+        assertEquals(8,newInitial.authentication!!.generation)
+        assertEquals("192.0.2.1",f.handoff.configuration()!!.address)
+        assertTrue(f.logs.any{"rebound to iAP generation=8 epoch=10" in it})
+    }
+
     @Test(timeout=5000) fun publishPrecedesDiscoveryAndBreaksConditionalWait() {runBlocking {
         val f=Fixture();val order=mutableListOf<String>();val published=CompletableDeferred<Unit>()
         val discovered=f.discovery()

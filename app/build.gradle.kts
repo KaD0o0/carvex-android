@@ -163,6 +163,7 @@ android {
         versionCode = releaseVersionCode
         versionName = releaseVersionName
         buildConfigField("String", "COMMIT", "\"$buildCommit\"")
+        manifestPlaceholders["carvexBuildCommit"] = buildCommit
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

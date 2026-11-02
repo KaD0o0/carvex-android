@@ -48,6 +48,9 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
+        <meta-data
+            android:name="io.github.iamr0s.carvex.BUILD_COMMIT"
+            android:value="${carvexBuildCommit}" />
         <activity
             android:name="io.github.iamr0s.carvex.ui.activity.MainActivity"
             android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboard|keyboardHidden"

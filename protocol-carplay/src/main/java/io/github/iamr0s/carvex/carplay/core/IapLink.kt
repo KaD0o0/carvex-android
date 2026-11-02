@@ -137,6 +137,11 @@ class IapLink(input:InputStream, private val output:OutputStream,
         sessions.single{it.kind==0}
     private fun sessionList(sessions:List<ControlSession>):String =
         sessions.joinToString(","){it.id.toString()+":kind"+it.kind+":v"+it.version}
+    private fun synchronizationSummary(value:Synchronization):String =
+        "v="+value.version+" win="+value.maxOutgoing+" mtu="+value.maxPacket+
+            " retryMs="+value.retryMs+" ackMs="+value.ackMs+" retries="+value.retries+
+            " maxAck="+value.maxAcknowledgements+" noRetransmit="+value.noRetransmit+
+            " sessions="+sessionList(value.sessions)+" extensions="+value.extensions
     /** SYN 正文布局（固件 `iap2-mainline.md` §参数表）：
      *  0..10 固定十字节；version 1 从 10 起每 3 字节一个 session 描述符到正文末尾；
      *  version 2/3 在 10 处是**扩展数量 + 扩展字节 + session 数量**，再跟 3 字节描述符。
@@ -213,7 +218,9 @@ class IapLink(input:InputStream, private val output:OutputStream,
         require(IapStartupPolicy.selectSchema(IapControlSessionKind.CARPLAY,controlVersion)!=null){
             "Unsupported control session version "+controlVersion
         }
-        return Synchronization(maxOutgoing,maxPacket,retransmitMs,ackMs,retries,maxAck,descriptors,version,noRetransmit,featureSet)
+        val result=Synchronization(maxOutgoing,maxPacket,retransmitMs,ackMs,retries,maxAck,descriptors,version,noRetransmit,featureSet)
+        log("iAP SYN parsed "+synchronizationSummary(result))
+        return result
     }
     private var maxPacket=localMaxTxFrameBytes
     private var retryMs=localRetransmitTimeoutMs.toLong()
@@ -465,9 +472,14 @@ class IapLink(input:InputStream, private val output:OutputStream,
     }
     private fun resendPendingSynAck(pending:PendingSynAck,reason:String){
         check(pendingSynAck===pending&&pending.epoch==synchronizationEpoch&&!closed.get())
-        if(pending.budget.retransmissions>=pendingSynAckRetryLimit)
+        if(pending.budget.retransmissions>=pendingSynAckRetryLimit){
+            log("iAP sync terminal state=retransmission-budget-exhausted epoch="+pending.epoch+
+                " pendingSeq="+pending.frame.seq+" pendingAck="+pending.frame.ack+
+                " proposals="+pending.budget.proposals+" retransmissions="+pending.budget.retransmissions+
+                " next=final-pure-ack-or-renegotiation")
             throw java.net.SocketTimeoutException("iAP SYNACK retransmission budget exhausted (retries="+
                 pendingSynAckRetryLimit+"); link dead")
+        }
         pending.budget.retransmissions++
         log("iAP SYNACK retransmit #"+pending.budget.retransmissions+"/"+pendingSynAckRetryLimit+
             " reason="+reason+" epoch="+pending.epoch)
@@ -520,7 +532,8 @@ class IapLink(input:InputStream, private val output:OutputStream,
         log("iAP sync proposal #"+(budget.proposals+1)+" epoch="+epoch+" seq="+sequence+
             " link="+work.local.version+" sessions="+sessionList(work.local.sessions)+
             " control="+control.id+" version="+control.version+" retryMs="+work.local.retryMs+
-            " ackMs="+work.local.ackMs+" peerWindow="+work.peer.maxOutgoing+" peerMtu="+work.peer.maxPacket)
+            " ackMs="+work.local.ackMs+" peerWindow="+work.peer.maxOutgoing+" peerMtu="+work.peer.maxPacket+
+            " next=final-pure-ack-or-renegotiation")
         budget.proposals++
         write(response) // Still uses the committed packet framing, not the proposal.
         if(budget.proposals>10)throw IOException("iAP SYN proposal budget exhausted; link dead")
@@ -594,15 +607,22 @@ class IapLink(input:InputStream, private val output:OutputStream,
                 // An exact retransmitted SYNACK acknowledges the PREVIOUS proposal.
                 // Classify it before checking ACK against our newest PSN.
                 if(sameSynchronizationFrame(incomingFrame,accepted)){
+                    log("iAP sync classify=duplicate-peer-syn peerSeq="+incomingFrame.seq+
+                        " pendingSeq="+pending.frame.seq+" action=resend-current-synack")
                     synchronized(writeLock){resendPendingSynAck(pending,"duplicate SYN")}
                     continue
                 }
                 if(incomingFrame.flags==0x80&&incomingFrame.session==0&&incomingFrame.seq!=accepted.seq){
-                    log("iAP pending fresh SYN seq="+incomingFrame.seq+"; resetting synchronization")
+                    log("iAP sync classify=fresh-peer-syn oldPeerSeq="+accepted.seq+
+                        " newPeerSeq="+incomingFrame.seq+" pendingSeq="+pending.frame.seq+
+                        " action=reset-synchronization")
                     exchangeSynchronization(false,incomingFrame,budget,(pending.frame.seq+1) and 255);return
                 }
-                if(incomingFrame.flags and 0x80!=0&&incomingFrame.seq==accepted.seq)
+                if(incomingFrame.flags and 0x80!=0&&incomingFrame.seq==accepted.seq){
+                    log("iAP sync classify=same-peer-seq-changed peerSeq="+incomingFrame.seq+
+                        " pendingSeq="+pending.frame.seq+" action=fail")
                     throw IllegalArgumentException("SYNC_SAME_PSN_CHANGED")
+                }
                 // Bounded initial-handshake recovery, NOT general ACK tolerance.
                 // ReadyPacket tests unsigned (lastTx-ack)&255 against ACTIVE peer
                 // window. Attach defaults it to 1; the proposed peerWindow has not
@@ -612,17 +632,30 @@ class IapLink(input:InputStream, private val output:OutputStream,
                 val ackGap=(pending.frame.seq-incomingFrame.ack) and 255
                 if(generation==0&&incomingFrame.flags==0x40&&incomingFrame.session==0&&
                     incomingFrame.payload.isEmpty()&&incomingFrame.seq==accepted.seq&&ackGap>1){
-                    log("iAP pending ACK outside active window: expected="+pending.frame.seq+
+                    log("iAP sync classify=pending-ack-outside-window expected="+pending.frame.seq+
                         " received="+incomingFrame.ack+" gap="+ackGap+
                         " activePeerWindow=1; sending RST and awaiting fresh SYN on same transport")
                     exchangeSynchronization(false,budget=budget,resetInvalidAck=true)
                     return
                 }
+                if(incomingFrame.flags and 0x40==0||incomingFrame.ack!=pending.frame.seq){
+                    log("iAP sync classify=unassociated-frame flags="+incomingFrame.flags.toString(16)+
+                        " seq="+incomingFrame.seq+" ack="+incomingFrame.ack+
+                        " expectedAck="+pending.frame.seq+" payloadBytes="+incomingFrame.payload.size+
+                        " epoch="+handshakeEpoch+" proposals="+budget.proposals+
+                        " retransmissions="+budget.retransmissions+" next=associated-synack-or-final-ack")
+                }
                 require(incomingFrame.flags and 0x40!=0&&incomingFrame.ack==pending.frame.seq){"Unassociated SYN ACK"}
                 if(incomingFrame.flags and 0x80!=0){
                     require(incomingFrame.flags==0xc0&&incomingFrame.session==0&&incomingFrame.payload.isNotEmpty()){
                         "SYNC_RENEGOTIATION_REQUIRED"}
-                    val next=negotiateSynchronization(synchronization(incomingFrame.payload),work)
+                    val incoming=synchronization(incomingFrame.payload)
+                    val next=negotiateSynchronization(incoming,work)
+                    log("iAP sync classify=renegotiation peerSeq="+incomingFrame.seq+
+                        " peerAck="+incomingFrame.ack+" previousProposalSeq="+pending.frame.seq+
+                        " incoming="+synchronizationSummary(incoming)+
+                        " nextLocal="+synchronizationSummary(next.local)+
+                        " next=final-pure-ack-or-renegotiation")
                     synchronized(writeLock){
                         check(pendingSynAck===pending&&synchronizationEpoch==handshakeEpoch&&!closed.get())
                         pending=proposeSynchronization(incomingFrame,next,handshakeEpoch,budget,(pending.frame.seq+1) and 255)
@@ -631,6 +664,13 @@ class IapLink(input:InputStream, private val output:OutputStream,
                     // Native state4 events4 AND6 send SYNACK and remain pending.
                     // Even an unchanged SYNACK is not the pure confirmation event21.
                     continue
+                }
+                if(!(incomingFrame.flags==0x40&&incomingFrame.session==0&&
+                    incomingFrame.payload.isEmpty()&&incomingFrame.seq==accepted.seq)){
+                    log("iAP sync classify=invalid-final-confirmation flags="+incomingFrame.flags.toString(16)+
+                        " seq="+incomingFrame.seq+" ack="+incomingFrame.ack+
+                        " expectedPeerSeq="+accepted.seq+" payloadBytes="+incomingFrame.payload.size+
+                        " pendingSeq="+pending.frame.seq+" action=fail")
                 }
                 require(incomingFrame.flags==0x40&&incomingFrame.session==0&&
                     incomingFrame.payload.isEmpty()&&incomingFrame.seq==accepted.seq){"SYNC_CONFIRMATION_INVALID"}
@@ -652,6 +692,8 @@ class IapLink(input:InputStream, private val output:OutputStream,
                     generation++
                     // Publish the ready marker LAST, after all active fields.
                     negotiatedControlSession=session
+                    log("iAP sync classify=final-confirmation peerSeq="+accepted.seq+
+                        " peerAck="+pending.frame.seq+" action=commit next=AUTH-IDENTIFICATION")
                     log("iAP synchronized session="+control+" version="+controlVersion+" maxPacket="+maxPacket+
                         " proposals="+budget.proposals+" epoch="+handshakeEpoch)
                 }
