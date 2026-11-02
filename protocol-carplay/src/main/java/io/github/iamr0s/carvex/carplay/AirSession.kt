@@ -484,23 +484,43 @@ class AirSession(private val context:Context,private val path:NetworkPath,privat
             " endpointSource="+inputs.endpointSource+" startReady="+inputs.startReady)
         when(securityRoute){
             SecurityRoute.PAIRED->{
-                val identifier=PairingIdentityBinding.identifier(bootstrap.startSession?.receiver,metadata.deviceId,metadata.pairingId)
+                val identifier=PairingIdentityBinding.optionalIdentifier(bootstrap.startSession?.receiver,metadata.deviceId,metadata.pairingId)
                 // 固件对 /info 与 Bonjour 的 deviceID 冲突是"保留原值并继续"，这里保持一致，只记录。
                 if(PairingIdentityBinding.lastDeviceIdConflict)
                     log("receiver deviceID conflicts with Bonjour identity; keeping the advertised identity")
-                if(options.experiment){
-                    val pairingId=requireNotNull(metadata.pairingId)
+                if(options.experiment&&identifier==null&&inputs.startReady&&metadata.pairingId.isNullOrBlank()){
+                    // 4301 can provide a complete endpoint while Bonjour is unavailable. In this
+                    // experimental-only path, Pair Setup learns the real HAP identifier first;
+                    // the receiver is only a storage alias and is never compared to that HAP id.
+                    val receiverAlias=bootstrap.startSession?.receiver?:bootstrap.receiver
                     val homeKit=HomeKit(c,identity,ExperimentalHapV11::srp)
-                    shared=ExperimentalHapV11.authenticate(identifier,metadata.publicKey,
+                    val previous=store.experimental.loadFallback(identity,receiverAlias)
+                    if(previous!=null){
+                        log("Experimental HAP 4301-only fallback: stored peer found; using Pair Verify")
+                        shared=homeKit.verify(previous)
+                    }else{
+                        log("Experimental HAP 4301-only fallback: Bonjour pairing id missing; using Pair Setup")
+                        val paired=homeKit.setup(metadata.publicKey,"3939".toByteArray(Charsets.US_ASCII))
+                        val verified=homeKit.verify(paired)
+                        store.experimental.saveFallback(identity,receiverAlias,paired)
+                        shared=verified
+                    }
+                    log("Experimental HAP 4301-only fallback verified; receiver is a storage alias, not the HAP identifier")
+                }else if(options.experiment){
+                    val pairingId=requireNotNull(metadata.pairingId)
+                    val boundIdentifier=requireNotNull(identifier)
+                    val homeKit=HomeKit(c,identity,ExperimentalHapV11::srp)
+                    shared=ExperimentalHapV11.authenticate(boundIdentifier,metadata.publicKey,
                         store.experimental.load(identity,bootstrap.receiver,pairingId),
                         setup={code->homeKit.setup(metadata.publicKey,code)},verify=homeKit::verify,
                         saveVerified={peer->events.requireCurrent();store.experimental.saveVerified(identity,bootstrap.receiver,pairingId,peer)})
                     log("Experimental HAP v11 verified; encrypted control/media active; AA/SAP root trust not established")
                 }else{
-                    val recordKey=store.recordKey(identity,identifier)
+                    val boundIdentifier=requireNotNull(identifier)
+                    val recordKey=store.recordKey(identity,boundIdentifier)
                     val previous=store.records.lookup(recordKey)
                     val setupCode=if(previous.status==PairRecordStatus.ABSENT)setupInputProvider?.input(securityBinding) else null
-                    val action=try{SecurityRouter.select(inputs.copy(record=previous.status,peerHintPresent=identifier.isNotEmpty(),
+                    val action=try{SecurityRouter.select(inputs.copy(record=previous.status,peerHintPresent=boundIdentifier.isNotEmpty(),
                         setupProviderBound=setupCode?.isNotEmpty()==true))}catch(t:Throwable){setupCode?.fill(0);throw t}
                     val transaction=java.util.UUID.randomUUID().toString()
                     resources.own(AutoCloseable{store.records.rollback(recordKey,transaction)})
@@ -510,11 +530,11 @@ class AirSession(private val context:Context,private val path:NetworkPath,privat
                     }else{
                         val code=setupCode?:securityFailure(SecurityReason.SETUP_INPUT_UNAVAILABLE,phase="pair-setup")
                         val paired=try{homeKit.setup(metadata.publicKey,code)}finally{code.fill(0)}
-                        if(!paired.identifier.contentEquals(identifier))securityFailure(SecurityReason.PEER_BINDING_CONFLICT)
+                        if(!paired.identifier.contentEquals(boundIdentifier))securityFailure(SecurityReason.PEER_BINDING_CONFLICT)
                         store.records.stage(recordKey,transaction,paired)
                         paired
                     }
-                    if(!target.identifier.contentEquals(identifier)||
+                    if(!target.identifier.contentEquals(boundIdentifier)||
                         (metadata.publicKey!=null&&!java.security.MessageDigest.isEqual(metadata.publicKey,target.public)))
                         securityFailure(SecurityReason.PEER_BINDING_CONFLICT)
                     shared=homeKit.verify(target)

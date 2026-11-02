@@ -258,7 +258,10 @@ object BridgeStore {
         val info=context.packageManager.getPackageInfo(context.packageName,0)
         val debug=(context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE)!=0
         val o=options.value
+        val commit=context.packageManager.getApplicationInfo(context.packageName,android.content.pm.PackageManager.GET_META_DATA)
+            .metaData?.getString("io.github.iamr0s.carvex.BUILD_COMMIT")?:"unknown"
         "Version: "+(info.versionName?:"unknown")+" ("+info.longVersionCode+") · "+(if(debug)"debug" else "release")+"\n"+
+            "Build commit: "+commit+"\n"+
             "Device: "+android.os.Build.MANUFACTURER+" "+android.os.Build.MODEL+" · Android "+android.os.Build.VERSION.RELEASE+" (API "+android.os.Build.VERSION.SDK_INT+")\n"+
             "Target: "+o.target+" · phoneMac "+redact(o.phoneMac)+" · listen="+o.listen+" · experiment="+o.experiment+" · bindNetwork="+o.bindNetwork+"\n"
     }.getOrElse{"Version: unavailable\n"}

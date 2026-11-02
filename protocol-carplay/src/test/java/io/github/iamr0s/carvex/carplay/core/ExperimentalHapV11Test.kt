@@ -27,6 +27,10 @@ class ExperimentalHapV11Test {
         reason(SecurityReason.PAIR_IDENTIFIER_MISSING){PairingIdentityBinding.identifier(receiver,receiver,null)}
         reason(SecurityReason.PEER_BINDING_CONFLICT){PairingIdentityBinding.requirePeer(identifier,null,peer.copy(identifier=pi.lowercase().toByteArray()))}
     }
+    @Test fun optionalIdentifierAllows4301OnlyPathWithoutTreatingDeviceIdAsHapId(){
+        assertNull(PairingIdentityBinding.optionalIdentifier(receiver,receiver,null))
+        assertArrayEquals(identifier,PairingIdentityBinding.optionalIdentifier(receiver,receiver,pi))
+    }
     @Test fun oldAliasIsVerifiedThenMigratedWithoutProductionActivation(){
         val memory=Memory()
         val alias="peer-"+PairAlias.primary(receiver,pi)
@@ -88,5 +92,17 @@ class ExperimentalHapV11Test {
         records.saveVerified(owner,receiver,pi,peer)
         assertNull(records.load(owner.copy(seed=ByteArray(32){8}),receiver,pi))
         assertNull(records.load(owner,"001122334455",pi))
+    }
+
+    @Test fun receiverFallbackStoresRealHapIdentifierAndRejectsReplacement(){
+        val memory=Memory();val records=ExperimentalHapRecords(memory)
+        records.saveFallback(owner,receiver,peer)
+        val loaded=records.loadFallback(owner,receiver)!!
+        assertArrayEquals(peer.identifier,loaded.identifier);assertArrayEquals(peer.public,loaded.public)
+        reason(SecurityReason.PEER_BINDING_CONFLICT){
+            records.saveFallback(owner,receiver,peer.copy(public=ByteArray(32){7}))
+        }
+        val retained=records.loadFallback(owner,receiver)!!
+        assertArrayEquals(peer.identifier,retained.identifier);assertArrayEquals(peer.public,retained.public)
     }
 }

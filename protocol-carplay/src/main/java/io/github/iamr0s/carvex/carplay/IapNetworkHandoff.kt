@@ -8,12 +8,14 @@ import kotlinx.coroutines.flow.first
  * Bootstrap owns the reader until it returns; the caller then owns exactly one
  * message pump. Neither callback does Android/network work on that reader. */
 class IapNetworkHandoff(
-    private val generation:Int,
-    private val epoch:Long,
+    generation:Int,
+    epoch:Long,
     private val experimental:Boolean,
     private val current:()->Boolean,
     private val log:(String)->Unit={},
 ):AutoCloseable {
+    private var generation=generation
+    private var epoch=epoch
     private data class State(val configuration:WifiBootstrap?=null,val closed:Boolean=false)
     private val state=MutableStateFlow(State())
     private var accepted:WifiBootstrap?=null
@@ -30,6 +32,20 @@ class IapNetworkHandoff(
         accepted?.identification?.requireCurrent(generation,epoch)
     }
     @Synchronized fun configuration():WifiBootstrap? {requireCurrent();return state.value.configuration}
+
+    /** A fresh iAP SYN starts a new bootstrap generation. Drop all old-link identity and
+     * network candidates before the caller re-runs Identification/Authentication. */
+    @Synchronized fun rebind(newGeneration:Int,newEpoch:Long){
+        check(!state.value.closed){"Network handoff context retired"}
+        accepted?.identification?.invalidate()
+        generation=newGeneration
+        epoch=newEpoch
+        accepted=null
+        committed=false
+        state.value=State()
+        log("Handoff rebound to iAP generation="+newGeneration+" epoch="+newEpoch+
+            "; old authentication and endpoint candidates cleared")
+    }
 
     @Synchronized fun announcement(value:WifiAnnouncement?){
         requireCurrent()
